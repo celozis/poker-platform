@@ -46,3 +46,8 @@ build/
 # Misc
 .scratch/
 *.docx
+
+# Python tooling
+.venv/
+.pytest_cache/
+.mypy_cache/

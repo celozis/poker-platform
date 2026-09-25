@@ -116,7 +116,7 @@ We're building a system to replace manual tournament management (spreadsheets, c
 - **Backend API** (FastAPI, Python): Manages tournaments, players, ratings, cash. Exposes REST + WebSocket.
 - **Telegram Bot** (aiogram, Python): Primary player entry point.
 - **Web Frontend** (React, TS): Admin Panel, Player Cabinet, Dealer Cabinet, Tabletop.
-- **Database** (PostgreSQL): Multi-tenant (per-club) schema or row-level security.
+- **Database** (PostgreSQL): Multi-tenant (per-club) schema or row-level security. Accessed via SQLAlchemy 2 with sync sessions (ADR-0002); Alembic migrations run automatically on backend start.
 - **Integrations**: iiko (cashier), ЮДС (loyalty), Telegram API, VK ID (auth).
 
 **MVP (Phase 1):**
@@ -153,26 +153,51 @@ We're building a system to replace manual tournament management (spreadsheets, c
 
 ## Running the Project
 
-(To be filled in once the repo structure stabilizes.)
+Requires Docker (Docker Desktop on Windows/macOS). Repo layout: `backend/` (FastAPI + Alembic), `frontend/` (React + Vite), `docker-compose.yml` at the root.
 
 ```bash
-# Install dependencies
-pip install -r requirements.txt
-npm install
-
-# Start the backend
-python -m uvicorn app.main:app --reload
-
-# Start the frontend (dev server)
-npm run dev
-
-# Start the Telegram bot (separate process or thread)
-python -m app.bot.main
-
-# Run tests
-pytest
-npm test
+# Start everything: PostgreSQL, backend (applies migrations on start), frontend
+docker compose up --build
 ```
+
+- Frontend: http://localhost:5173 (the home page shows API and database status)
+- Backend API: http://localhost:8000 (health check: `/api/health`, docs: `/docs`)
+- PostgreSQL: `localhost:5433`, user/password `poker`/`poker`, databases `poker` (dev) and `poker_test` (tests). Host port 5433 avoids clashing with a locally installed PostgreSQL.
+
+### Running tests
+
+Backend tests hit a real PostgreSQL (`poker_test`), so the `db` service must be running. `poker_test` is created only when the `pgdata` volume is first initialised; if your volume predates it, run `docker compose exec db createdb -U poker poker_test` once (or recreate the volume with `docker compose down -v`, which deletes dev data). The test fixture resets the schema and refuses to run against a database whose name doesn't end in `_test`.
+
+```bash
+# Backend: inside the container
+docker compose run --rm backend pytest
+docker compose run --rm backend mypy
+
+# Backend: on the host (Python 3.12), with `docker compose up -d db` running
+cd backend
+python -m venv .venv && .venv/Scripts/pip install -r requirements-dev.txt   # .venv/bin/pip on Linux/macOS
+.venv/Scripts/python -m pytest
+.venv/Scripts/python -m mypy
+
+# Frontend (Node 22)
+cd frontend
+npm ci
+npm test
+npm run typecheck
+```
+
+### Migrations
+
+```bash
+# Create a new migration after changing models
+docker compose run --rm backend alembic revision --autogenerate -m "describe change"
+# Migrations are applied automatically on backend start; to apply by hand:
+docker compose run --rm backend alembic upgrade head
+```
+
+CI (GitHub Actions, `.github/workflows/ci.yml`) runs backend mypy + pytest against a PostgreSQL service container and frontend typecheck + tests on every push.
+
+The Telegram bot (aiogram) is not part of the skeleton yet.
 
 ---
 
