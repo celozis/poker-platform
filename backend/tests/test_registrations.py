@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 from app.models import Club
 from tests.clock import FakeClock
 from tests.factories import create_club
+from tests.game import ready_tournament
 from tests.login import log_in
 from tests.players import a_player, switch_to_another_club
 from tests.tournaments import a_tournament
@@ -69,24 +70,22 @@ def test_only_the_clubs_own_players_can_be_registered(client: TestClient, club: 
     assert response.json()["detail"] == "Игрок не найден в клубе"
 
 
-def test_registration_is_open_only_until_the_tournament_starts(
+def test_registration_stays_open_until_the_tournament_is_started_however_late(
     client: TestClient, club: Club, clock: FakeClock
 ) -> None:
-    ivan = add_player(client, club, "Иван Петров", "+79135551234")
+    url, _ = ready_tournament(client, club, arrived=2, late_registration_until_level=None)
     maria = add_player(client, club, "Мария Иванова", "+79131110002")
-    registrations = create_tournament(client, club, starts_at="2026-09-26T19:00:00Z")
-    client.post(registrations, json={"player_id": ivan["id"]})
-    before = client.get(registrations).json()
+    sergey = add_player(client, club, "Сергей Никитин", "+79131110003")
 
-    clock.advance(timedelta(hours=7))
-    late = client.post(registrations, json={"player_id": maria["id"]})
+    clock.advance(timedelta(hours=8))  # past the start time, but nobody has started it
+    before_start = client.post(f"{url}/registrations", json={"player_id": maria["id"]})
+    client.post(f"{url}/start")
+    after_start = client.post(f"{url}/registrations", json={"player_id": sergey["id"]})
 
-    assert before["registration_open"] is True
-    assert late.status_code == 409
-    assert late.json()["detail"] == "Турнир уже начался, регистрация закрыта"
-    after = client.get(registrations).json()
-    assert after["registration_open"] is False
-    assert after["registrations"] == [{"player": ivan, "status": "registered"}]
+    assert before_start.status_code == 201
+    assert after_start.status_code == 409
+    assert after_start.json()["detail"] == "Турнир уже идёт, поздней регистрации в нём нет"
+    assert client.get(f"{url}/registrations").json()["registration_open"] is False
 
 
 def test_a_cancelled_tournament_takes_no_registrations(client: TestClient, club: Club) -> None:
@@ -119,25 +118,42 @@ def test_admin_cancels_a_registration_before_the_tournament_starts(
     assert client.get(registrations).json()["registrations"] == [
         {"player": maria, "status": "registered"}
     ]
+    assert client.get(registrations).json()["drop_out_open"] is True
     # The player can sign up again later.
     assert client.post(registrations, json={"player_id": ivan["id"]}).status_code == 201
 
 
 def test_a_registration_cannot_be_cancelled_once_the_tournament_has_started(
-    client: TestClient, club: Club, clock: FakeClock
+    client: TestClient, club: Club
 ) -> None:
-    ivan = add_player(client, club, "Иван Петров", "+79135551234")
-    registrations = create_tournament(client, club, starts_at="2026-09-26T19:00:00Z")
-    client.post(registrations, json={"player_id": ivan["id"]})
+    url, players = ready_tournament(client, club, arrived=2, not_arrived=1)
+    client.post(f"{url}/start")
 
-    clock.advance(timedelta(hours=7))
-    response = client.delete(f"{registrations}/{ivan['id']}")
+    response = client.delete(f"{url}/registrations/{players[2]['id']}")
 
     assert response.status_code == 409
-    assert response.json()["detail"] == "Турнир уже начался, регистрация закрыта"
-    assert client.get(registrations).json()["registrations"] == [
-        {"player": ivan, "status": "registered"}
-    ]
+    assert response.json()["detail"] == "Турнир уже начался, снять с регистрации нельзя"
+    listed = client.get(f"{url}/registrations").json()
+    assert len(listed["registrations"]) == 3
+    # Late registration is still open, dropping out is not.
+    assert (listed["registration_open"], listed["drop_out_open"]) == (True, False)
+
+
+def test_check_in_closes_once_the_tournament_has_started(client: TestClient, club: Club) -> None:
+    url, players = ready_tournament(client, club, arrived=2, not_arrived=1)
+    client.post(f"{url}/start")
+
+    checked_in = client.post(f"{url}/registrations/{players[2]['id']}/check-in")
+    undone = client.delete(f"{url}/registrations/{players[0]['id']}/check-in")
+
+    for refused in (checked_in, undone):
+        assert refused.status_code == 409
+        assert refused.json()["detail"] == (
+            "Турнир уже начался: опоздавшего сажают через позднюю регистрацию"
+        )
+    listed = client.get(f"{url}/registrations").json()
+    assert listed["check_in_open"] is False
+    assert [r["status"] for r in listed["registrations"]] == ["in_game", "in_game", "registered"]
 
 
 def test_check_in_is_open_from_12_hours_before_to_12_hours_after_the_start(

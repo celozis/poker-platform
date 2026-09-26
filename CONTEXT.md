@@ -45,17 +45,24 @@ We're building a system to replace manual tournament management (spreadsheets, c
 
 **Status**: Player's loyalty tier (auto-calculated from number of games, ЮДС integration). Affects discount on buy-in.
 
-**Registration**: A club player signed up for a tournament, at most once per tournament. States: Registered → Checked In → In Game → Out (place assigned) → Final Results; so far only Registered and Checked In exist. Players sign up and drop out only while the tournament is upcoming and not cancelled (late registration is not supported yet).
+**Registration**: A club player signed up for a tournament, at most once per tournament. States: Registered → Checked In → In Game (seated) → Out (finished with a place). Players sign up until the tournament is started, however late that is, and afterwards only during Late Registration; they drop out only before the start.
 
-**Check-in**: Marking on the day that a registered player has come to the club. Open from 12 hours before the tournament's start to 12 hours after it, so latecomers can still be checked in; a mistaken check-in can be taken back within the same window. Clubs have no time zone yet, which is why this is a window around the start rather than a calendar day.
+**Check-in**: Marking on the day that a registered player has come to the club. Open from 12 hours before the tournament's start time to 12 hours after it, and closed once the tournament is started: a player who comes later is seated through Late Registration, which checks them in. A mistaken check-in can be taken back while check-in is open. Clubs have no time zone yet, which is why this is a window around the start rather than a calendar day.
 
 ### Tournaments
 
-**Tournament**: A structured poker game event at a specific club on a specific date/time. Has: name, start time, buy-in, starting stack, blind structure, rules (re-entry, add-on, late registration). Status is `scheduled` (the «Created» state of spec #1's state machine Created → In Progress → Paused → Finished) or `cancelled` (a final state outside that machine). Until a "start tournament" action exists, a tournament counts as **started** once its start time has passed. Upcoming tournaments start in the future, past ones have started. Only an upcoming, not cancelled tournament can be edited or cancelled; a cancelled one stays on the list, marked as cancelled.
+**Tournament**: A structured poker game event at a specific club on a specific date/time. Has: name, start time, buy-in, starting stack, seats per table, blind structure, rules (re-entry, add-on, late registration). States: Created (`scheduled` in code) → Running ⇄ Paused → Finished, or Created → Cancelled. A tournament is **started** when the admin starts it, not when its start time comes; a finished one is never started again. Only a tournament that has not started can be edited or cancelled; a cancelled one stays on the list, marked as cancelled.
+_Avoid_: "In Progress" (say Running)
+
+**Live Tournament**: One that is Running or Paused: players are knocked out, re-enter, take add-ons and sit down.
+
+**Seats per Table**: How many players a table of this tournament seats, from 2 to 10; 9 unless the admin says otherwise.
 
 **Blind Structure**: The tournament's levels and breaks in play order. Stored as a whole with the tournament (ADR-0004).
 
 **Blind Level**: A row in the tournament's structure. Defines: small blind, big blind, ante, duration. Levels are numbered 1..N in play order; breaks are not numbered.
+
+**Blind Clock**: The timer of a started tournament: which level or break is being played and how much of it is left. It moves on to the next level or break by itself when time is up; the admin can pause it and switch to the next or previous level or break, which then starts from its full duration. The last level goes on with no time left.
 
 **Break**: A pause between levels in the blind structure. Has only a duration.
 
@@ -63,19 +70,25 @@ We're building a system to replace manual tournament management (spreadsheets, c
 
 **Buy-in**: The entry fee (registration cost). Paid either cash-on-entry or online through app.
 
-**Re-entry**: Player's option to buy back in if they bust. Allowed up to and including a given level ("re-entry until level N"), or not offered at all.
+**Knock-out**: A player leaving the game for good (unless they re-enter). The admin marks it; it gives the player their Place.
+_Avoid_: Bust, elimination (in the admin panel)
 
-**Add-on**: Player's option to buy extra chips at a fixed point in the tournament: at a given level, or not offered at all.
+**Re-entry**: Player's option to buy back in after a knock-out, taking a new seat. Allowed up to and including a given level ("re-entry until level N"), or not offered at all; as many times as the window allows.
 
-**Late Registration**: Window during which new players can join an already-running tournament: up to and including a given level, or not offered at all.
+**Add-on**: Player's option to buy extra chips at a fixed point in the tournament: at a given level, or not offered at all. One per entry: a player who re-entered can take it again.
 
-Rule levels always refer to blind level numbers (breaks not counted) and must exist in the tournament's structure.
+**Late Registration**: Window during which new players can join, and registered players who came late can sit down, in a started tournament: up to and including a given level, or not offered at all.
 
-**Seating**: Assignment of players to tables and positions. Auto-computed by the system, balanced to keep tables even.
+Rule levels always refer to blind level numbers (breaks not counted) and must exist in the tournament's structure. A break belongs to the level before it: on the break after level N the windows of level N are still open, which is when clubs usually give the add-on.
 
-**Final Table**: The last table when only N players remain. Automatically assembled when game reaches this stage.
+**Seating**: Assignment of players to tables and seats. At the start the system draws everyone who has come at random over as few tables as fit them, with player counts differing by at most one. A latecomer or a re-entry gets a random free seat at the table with the fewest players.
 
-**Place (Finish)**: Where a player finished (1st, 2nd, 3rd, out). Determines rating points.
+**Move (пересадка)**: One player moved to another table to keep tables even. After knock-outs the system suggests the next move (a table no longer needed is broken up first, one player at a time) and the admin makes it; a move can also go to any other free seat.
+_Avoid_: Rebalance, reseat
+
+**Final Table**: The one table left once the remaining players fit at it. The system assembles it by itself right after the knock-out that makes this possible, drawing every seat again.
+
+**Place (Finish)**: Where a player finished. Whoever finishes later places higher; the last player standing wins (place 1) and finishes the tournament. A re-entry or a late player after a knock-out moves that knocked-out player's place down. Determines rating points.
 
 ### Rating & Leaderboard
 
@@ -140,6 +153,7 @@ Rule levels always refer to blind level numbers (breaks not counted) and must ex
 - **Web Frontend** (React, TS): Admin Panel, Player Cabinet, Dealer Cabinet, Tabletop.
 - **Database** (PostgreSQL): Multi-tenant via shared tables with a `club_id` column; access is enforced by the `AdminClub` dependency on every `/api/clubs/{club_id}/...` route (ADR-0003). Accessed via SQLAlchemy 2 with sync sessions (ADR-0002); Alembic migrations run automatically on backend start.
 - **Players**: League-wide `players` (one per phone), each club's list in `club_players`, and `registrations` of a club's players for its tournaments (ADR-0005).
+- **Running a tournament**: the game lives in the tournament row (status, blind clock) and in its registrations (seat, finish order, re-entries, add-ons); the blind clock is worked out from the time, with no background job (ADR-0006).
 - **Integrations**: iiko (cashier), ЮДС (loyalty), Telegram API, VK ID (auth).
 
 **MVP (Phase 1):**

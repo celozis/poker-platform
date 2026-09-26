@@ -37,6 +37,7 @@ type Fields = {
   reentryUntilLevel: string;
   addonAtLevel: string;
   lateRegistrationUntilLevel: string;
+  seatsPerTable: string;
 };
 
 function initialFields(tournament?: Tournament): Fields {
@@ -48,6 +49,7 @@ function initialFields(tournament?: Tournament): Fields {
     reentryUntilLevel: levelText(tournament?.reentry_until_level ?? null),
     addonAtLevel: levelText(tournament?.addon_at_level ?? null),
     lateRegistrationUntilLevel: levelText(tournament?.late_registration_until_level ?? null),
+    seatsPerTable: String(tournament?.seats_per_table ?? 9),
   };
 }
 
@@ -110,6 +112,7 @@ export default function TournamentForm({
         reentry_until_level: optionalLevel(fields.reentryUntilLevel),
         addon_at_level: optionalLevel(fields.addonAtLevel),
         late_registration_until_level: optionalLevel(fields.lateRegistrationUntilLevel),
+        seats_per_table: Number(fields.seatsPerTable),
       });
     } catch (error) {
       setErrors(error instanceof RejectedError ? error.messages : [SERVER_UNREACHABLE]);
@@ -157,6 +160,18 @@ export default function TournamentForm({
             min={1}
             value={fields.startingStack}
             onChange={changeHandler("startingStack")}
+            className={inputClass}
+          />
+        </label>
+        <label className={labelClass}>
+          Мест за столом
+          <input
+            type="number"
+            required
+            min={2}
+            max={10}
+            value={fields.seatsPerTable}
+            onChange={changeHandler("seatsPerTable")}
             className={inputClass}
           />
         </label>

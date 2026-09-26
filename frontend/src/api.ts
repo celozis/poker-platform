@@ -35,11 +35,16 @@ export type TournamentInput = {
   reentry_until_level: number | null;
   addon_at_level: number | null;
   late_registration_until_level: number | null;
+  seats_per_table: number;
 };
 
-export type Tournament = TournamentInput & { id: number; status: "scheduled" | "cancelled" };
+/** scheduled → running ⇄ paused → finished; or scheduled → cancelled. */
+export type TournamentStatus = "scheduled" | "running" | "paused" | "finished" | "cancelled";
 
-export type TournamentList = { upcoming: Tournament[]; past: Tournament[] };
+export type Tournament = TournamentInput & { id: number; status: TournamentStatus };
+
+/** live: running or paused; upcoming: not started yet, however late. */
+export type TournamentList = { live: Tournament[]; upcoming: Tournament[]; past: Tournament[] };
 
 /** A league player on the club's list. */
 export type Player = { id: number; name: string; phone: string };
@@ -53,11 +58,16 @@ export type PlayerAdded = {
   outcome: "created" | "added_to_club" | "already_in_club";
 };
 
-export type Registration = { player: Player; status: "registered" | "checked_in" };
+export type Registration = {
+  player: Player;
+  status: "registered" | "checked_in" | "in_game" | "out";
+};
 
 export type TournamentRegistrations = {
-  /** Players can sign up or drop out: the tournament is upcoming and not cancelled. */
+  /** Players can sign up: until the tournament is started, then while late registration is open. */
   registration_open: boolean;
+  /** Players can drop out: until the tournament is started. */
+  drop_out_open: boolean;
   /** Arrivals can be checked in: from 12 hours before the start to 12 hours after it. */
   check_in_open: boolean;
   registrations: Registration[];
@@ -155,18 +165,20 @@ export async function createTournament(
   return accepted(await sendJson("POST", clubTournamentsUrl(clubId), tournament));
 }
 
+function tournamentUrl(clubId: number, tournamentId: number): string {
+  return `${clubTournamentsUrl(clubId)}/${tournamentId}`;
+}
+
 export async function updateTournament(
   clubId: number,
   tournamentId: number,
   tournament: TournamentInput,
 ): Promise<Tournament> {
-  const url = `${clubTournamentsUrl(clubId)}/${tournamentId}`;
-  return accepted(await sendJson("PUT", url, tournament));
+  return accepted(await sendJson("PUT", tournamentUrl(clubId, tournamentId), tournament));
 }
 
 export async function cancelTournament(clubId: number, tournamentId: number): Promise<Tournament> {
-  const url = `${clubTournamentsUrl(clubId)}/${tournamentId}/cancel`;
-  return accepted(await postJson(url));
+  return accepted(await postJson(`${tournamentUrl(clubId, tournamentId)}/cancel`));
 }
 
 function clubPlayersUrl(clubId: number): string {
@@ -186,7 +198,7 @@ export async function addPlayer(clubId: number, player: PlayerInput): Promise<Pl
 }
 
 function registrationsUrl(clubId: number, tournamentId: number): string {
-  return `${clubTournamentsUrl(clubId)}/${tournamentId}/registrations`;
+  return `${tournamentUrl(clubId, tournamentId)}/registrations`;
 }
 
 export async function fetchRegistrations(
@@ -225,4 +237,89 @@ export async function setCheckedIn(
 ): Promise<Registration> {
   const url = `${registrationsUrl(clubId, tournamentId)}/${playerId}/check-in`;
   return accepted(await sendJson(arrived ? "POST" : "DELETE", url));
+}
+
+export type Clock = {
+  running: boolean;
+  /** The structure item (level or break) being played: an index into the tournament's structure. */
+  item: number;
+  seconds_left: number;
+};
+
+export type EntryWindows = { reentry: boolean; addon: boolean; late_registration: boolean };
+
+export type SeatedPlayer = {
+  player: Player;
+  table: number;
+  seat: number;
+  reentries: number;
+  addons: number;
+  /** One add-on per entry: whether the current entry has had it. */
+  addon_this_entry: boolean;
+};
+
+export type FinishedPlayer = { player: Player; place: number; reentries: number; addons: number };
+
+export type Move = {
+  player: Player;
+  from_table: number;
+  from_seat: number;
+  to_table: number;
+  to_seat: number;
+};
+
+/** A tournament's game as the admin runs it; every action answers with the whole of it. */
+export type GameState = {
+  status: TournamentStatus;
+  seats_per_table: number;
+  /** null until the tournament starts. */
+  clock: Clock | null;
+  windows: EntryWindows;
+  /** By table and seat. */
+  in_game: SeatedPlayer[];
+  /** Knocked out, and at the end the winner; by place. */
+  out: FinishedPlayer[];
+  /** Registered but not seated. */
+  waiting: Registration[];
+  /** A move that keeps tables even, when they are not. */
+  suggested_move: Move | null;
+};
+
+export async function fetchGame(clubId: number, tournamentId: number): Promise<GameState> {
+  const response = await fetch(`${tournamentUrl(clubId, tournamentId)}/game`);
+  if (!response.ok) throw failed(response);
+  return response.json();
+}
+
+export type GameAction = "start" | "pause" | "resume" | "next-level" | "previous-level";
+
+export async function runGame(
+  clubId: number,
+  tournamentId: number,
+  action: GameAction,
+): Promise<GameState> {
+  return accepted(await postJson(`${tournamentUrl(clubId, tournamentId)}/${action}`));
+}
+
+/** seat: a late player sits down. */
+export type PlayerAction = "knock-out" | "reentry" | "addon" | "seat";
+
+export async function actOnPlayer(
+  clubId: number,
+  tournamentId: number,
+  playerId: number,
+  action: PlayerAction,
+): Promise<GameState> {
+  const url = `${tournamentUrl(clubId, tournamentId)}/players/${playerId}/${action}`;
+  return accepted(await postJson(url));
+}
+
+export async function movePlayer(
+  clubId: number,
+  tournamentId: number,
+  playerId: number,
+  to: { table: number; seat: number },
+): Promise<GameState> {
+  const url = `${tournamentUrl(clubId, tournamentId)}/players/${playerId}/move`;
+  return accepted(await postJson(url, to));
 }

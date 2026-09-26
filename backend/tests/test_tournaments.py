@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 from app.models import Club
 from tests.clock import FakeClock
 from tests.factories import create_admin, create_club
+from tests.game import ready_tournament
 from tests.login import log_in
 from tests.tournaments import a_break, a_level, a_tournament
 
@@ -43,24 +44,30 @@ def names(tournaments: list[dict[str, object]]) -> list[object]:
     return [tournament["name"] for tournament in tournaments]
 
 
-def test_tournaments_move_from_upcoming_to_past_once_they_start(
+def test_a_tournament_is_upcoming_until_started_however_late_and_live_while_it_runs(
     client: TestClient, club: Club, clock: FakeClock
 ) -> None:
-    for name, starts_at in [
-        ("Воскресный", "2026-09-27T12:00:00Z"),
-        ("Пятничный", "2026-10-02T12:00:00Z"),
-        ("Субботний", "2026-09-26T18:00:00Z"),
-    ]:
-        client.post(f"/api/clubs/{club.id}/tournaments", json=a_tournament(name=name, starts_at=starts_at))
+    saturday, _ = ready_tournament(client, club, arrived=2, name="Субботний")
+    url = f"/api/clubs/{club.id}/tournaments"
+    for name, starts_at in [("Воскресный", "2026-09-27T12:00:00Z"), ("Пятничный", "2026-10-02T12:00:00Z")]:
+        client.post(url, json=a_tournament(name=name, starts_at=starts_at))
+    cancelled = client.post(
+        url, json=a_tournament(name="Отменённый", starts_at="2026-09-27T15:00:00Z")
+    ).json()
+    client.post(f"{url}/{cancelled['id']}/cancel")
 
-    before = client.get(f"/api/clubs/{club.id}/tournaments").json()
+    before = client.get(url).json()
+    client.post(f"{saturday}/start")
     clock.advance(timedelta(days=2))
-    after = client.get(f"/api/clubs/{club.id}/tournaments").json()
+    after = client.get(url).json()
 
-    assert names(before["upcoming"]) == ["Субботний", "Воскресный", "Пятничный"]
-    assert names(before["past"]) == []
-    assert names(after["upcoming"]) == ["Пятничный"]
-    assert names(after["past"]) == ["Воскресный", "Субботний"]  # most recent first
+    assert names(before["live"]) == []
+    assert names(before["upcoming"]) == ["Субботний", "Воскресный", "Отменённый", "Пятничный"]
+    assert names(after["live"]) == ["Субботний"]
+    # Sunday's start time has passed, but nobody has started it yet.
+    assert names(after["upcoming"]) == ["Воскресный", "Пятничный"]
+    # A cancelled tournament never starts: it is past once its start time has passed.
+    assert names(after["past"]) == ["Отменённый"]
 
 
 def test_admin_edits_a_tournament_before_it_starts(client: TestClient, club: Club) -> None:
@@ -105,14 +112,11 @@ def test_admin_cancels_a_tournament_before_it_starts(client: TestClient, club: C
 
 
 def test_a_started_tournament_can_no_longer_be_edited_or_cancelled(
-    client: TestClient, club: Club, clock: FakeClock
+    client: TestClient, club: Club
 ) -> None:
-    created = client.post(
-        f"/api/clubs/{club.id}/tournaments", json=a_tournament(starts_at="2026-09-26T19:00:00Z")
-    ).json()
-    url = f"/api/clubs/{club.id}/tournaments/{created['id']}"
+    url, _ = ready_tournament(client, club, arrived=2)
+    client.post(f"{url}/start")
 
-    clock.advance(timedelta(hours=7))
     edited = client.put(url, json=a_tournament(name="Другое название"))
     cancelled = client.post(f"{url}/cancel")
 
@@ -120,8 +124,20 @@ def test_a_started_tournament_can_no_longer_be_edited_or_cancelled(
     assert edited.json()["detail"] == "Турнир уже начался, его нельзя изменить"
     assert cancelled.status_code == 409
     assert cancelled.json()["detail"] == "Турнир уже начался, его нельзя отменить"
-    [past] = client.get(f"/api/clubs/{club.id}/tournaments").json()["past"]
-    assert past == created
+    [live] = client.get(f"/api/clubs/{club.id}/tournaments").json()["live"]
+    assert (live["name"], live["status"]) == ("Пятничный турнир", "running")
+
+
+def test_a_tournament_not_started_at_its_time_can_still_be_cancelled(
+    client: TestClient, club: Club, clock: FakeClock
+) -> None:
+    url, _ = ready_tournament(client, club, arrived=2)
+
+    clock.advance(timedelta(hours=8))
+    cancelled = client.post(f"{url}/cancel")
+
+    assert cancelled.status_code == 200
+    assert cancelled.json()["status"] == "cancelled"
 
 
 def test_a_cancelled_tournament_can_no_longer_be_edited(client: TestClient, club: Club) -> None:
@@ -158,7 +174,7 @@ def test_admin_does_not_see_another_clubs_tournaments(
     own = client.get(f"/api/clubs/{club.id}/tournaments")
     other = client.get(other_club_list)
 
-    assert own.json() == {"upcoming": [], "past": []}
+    assert own.json() == {"live": [], "upcoming": [], "past": []}
     assert other.status_code == 403
     assert "Енисея" not in other.text
 
@@ -202,6 +218,21 @@ def test_invalid_tournament_is_rejected_with_a_clear_error(client: TestClient, c
         "detail": ["Add-on: уровня 12 нет в структуре, в ней уровни с 1 по 3"]
     }
     assert client.get(f"/api/clubs/{club.id}/tournaments").json()["upcoming"] == []
+
+
+def test_tables_seat_nine_unless_the_admin_says_otherwise(client: TestClient, club: Club) -> None:
+    url = f"/api/clubs/{club.id}/tournaments"
+
+    nine = client.post(url, json=a_tournament())
+    six_max = client.post(url, json=a_tournament(seats_per_table=6))
+    too_few = client.post(url, json=a_tournament(seats_per_table=1))
+    too_many = client.post(url, json=a_tournament(seats_per_table=11))
+
+    assert nine.json()["seats_per_table"] == 9
+    assert six_max.json()["seats_per_table"] == 6
+    for refused in (too_few, too_many):
+        assert refused.status_code == 422
+        assert refused.json() == {"detail": ["Мест за столом: от 2 до 10"]}
 
 
 def test_invalid_changes_are_rejected_and_the_tournament_stays_as_it_was(

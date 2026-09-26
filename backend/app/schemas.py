@@ -64,6 +64,11 @@ class TournamentIn(BaseModel):
     reentry_until_level: int | None = None
     addon_at_level: int | None = None
     late_registration_until_level: int | None = None
+    seats_per_table: int = 9
+
+
+# scheduled → running ⇄ paused → finished; or scheduled → cancelled.
+TournamentStatus = Literal["scheduled", "running", "paused", "finished", "cancelled"]
 
 
 def _in_utc(moment: datetime) -> datetime:
@@ -75,10 +80,12 @@ class TournamentOut(TournamentIn):
 
     id: int
     starts_at: Annotated[AwareDatetime, AfterValidator(_in_utc)]
-    status: Literal["scheduled", "cancelled"]
+    status: TournamentStatus
 
 
 class TournamentList(BaseModel):
+    # Running or paused, by start time.
+    live: list[TournamentOut]
     upcoming: list[TournamentOut]
     past: list[TournamentOut]
 
@@ -118,13 +125,78 @@ class RegistrationOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     player: PlayerOut
-    # registered: signed up; checked_in: has come to the club on the day.
-    status: Literal["registered", "checked_in"]
+    # registered: signed up; checked_in: has come to the club on the day; in_game: seated in the
+    # running tournament; out: finished with a place.
+    status: Literal["registered", "checked_in", "in_game", "out"]
 
 
 class TournamentRegistrations(BaseModel):
-    # Whether players can still sign up or drop out: the tournament is upcoming and not cancelled.
+    # Whether players can sign up: until the tournament is started, then while late registration
+    # is open.
     registration_open: bool
+    # Whether players can drop out: until the tournament is started.
+    drop_out_open: bool
     # Whether arrivals can be checked in: from 12 hours before the start to 12 hours after it.
     check_in_open: bool
     registrations: list[RegistrationOut]
+
+
+class ClockOut(BaseModel):
+    running: bool
+    # The structure item (level or break) being played: an index into the tournament's structure.
+    item: int
+    seconds_left: int
+
+
+class EntryWindowsOut(BaseModel):
+    reentry: bool
+    addon: bool
+    late_registration: bool
+
+
+class SeatedPlayer(BaseModel):
+    player: PlayerOut
+    table: int
+    seat: int
+    reentries: int
+    addons: int
+    # One add-on per entry: whether the current entry has had it.
+    addon_this_entry: bool
+
+
+class FinishedPlayer(BaseModel):
+    player: PlayerOut
+    place: int
+    reentries: int
+    addons: int
+
+
+class MoveOut(BaseModel):
+    player: PlayerOut
+    from_table: int
+    from_seat: int
+    to_table: int
+    to_seat: int
+
+
+class GameState(BaseModel):
+    """A tournament's game as the admin runs it."""
+
+    status: TournamentStatus
+    seats_per_table: int
+    # None until the tournament starts.
+    clock: ClockOut | None
+    windows: EntryWindowsOut
+    # By table and seat.
+    in_game: list[SeatedPlayer]
+    # Knocked out, and at the end the winner; by place.
+    out: list[FinishedPlayer]
+    # Registered but not seated: not come yet, or come but not yet sat down.
+    waiting: list[RegistrationOut]
+    # A move that keeps tables even, when they are not.
+    suggested_move: MoveOut | None
+
+
+class MoveIn(BaseModel):
+    table: int
+    seat: int

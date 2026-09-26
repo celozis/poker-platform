@@ -1,7 +1,7 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
-from sqlalchemy import DateTime, ForeignKey, String, UniqueConstraint
+from sqlalchemy import DateTime, ForeignKey, Interval, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -67,11 +67,25 @@ class Tournament(Base):
     reentry_until_level: Mapped[int | None]
     addon_at_level: Mapped[int | None]
     late_registration_until_level: Mapped[int | None]
+    seats_per_table: Mapped[int] = mapped_column(default=9)
+    # scheduled → running ⇄ paused → finished; or scheduled → cancelled.
     status: Mapped[str] = mapped_column(String(20), default="scheduled")
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # The blind clock (app/blind_clock.py) once the tournament has started: the structure item
+    # being played and when it ends (running) or how much of it is left (paused).
+    clock_item: Mapped[int | None]
+    clock_ends_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    clock_remaining: Mapped[timedelta | None] = mapped_column(Interval)
 
-    def has_started(self, now: datetime) -> bool:
-        # There is no "start" action yet, so a tournament starts at its start time.
-        return self.starts_at <= now
+    @property
+    def has_started(self) -> bool:
+        return self.status in ("running", "paused", "finished")
+
+    @property
+    def is_live(self) -> bool:
+        """Running or paused: players can be knocked out, re-enter, take add-ons and sit down."""
+        return self.status in ("running", "paused")
 
 
 class Player(Base):
@@ -98,11 +112,19 @@ class ClubPlayer(Base):
 
 
 class Registration(Base):
-    """A player signed up for a tournament; checked in once they have come to the club."""
+    """A player signed up for a tournament; checked in once they have come to the club; seated
+    once the tournament is running, until they finish with a place."""
 
     __tablename__ = "registrations"
-    # A player is registered for a tournament at most once.
-    __table_args__ = (UniqueConstraint("tournament_id", "player_id"),)
+    __table_args__ = (
+        # A player is registered for a tournament at most once.
+        UniqueConstraint("tournament_id", "player_id"),
+        # One player per seat. Checked at commit, so that the final table can redraw every seat.
+        UniqueConstraint(
+            "tournament_id", "table_number", "seat_number", deferrable=True, initially="DEFERRED"
+        ),
+        UniqueConstraint("tournament_id", "finish_order"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     club_id: Mapped[int] = mapped_column(ForeignKey("clubs.id"), index=True)
@@ -110,9 +132,23 @@ class Registration(Base):
     player_id: Mapped[int] = mapped_column(ForeignKey("players.id"), index=True)
     registered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     checked_in_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Where the player sits while in the game.
+    table_number: Mapped[int | None]
+    seat_number: Mapped[int | None]
+    # 1 for the first player to finish (be knocked out), and so on; the winner finishes last.
+    # A re-entry takes the player back into the game and clears it. See app/game.py for places.
+    finish_order: Mapped[int | None]
+    reentries: Mapped[int] = mapped_column(default=0)
+    addons: Mapped[int] = mapped_column(default=0)
+    # One add-on per entry: taken in the current one; a re-entry starts a new entry.
+    addon_this_entry: Mapped[bool] = mapped_column(default=False)
 
     player: Mapped[Player] = relationship()
 
     @property
     def status(self) -> str:
+        if self.finish_order is not None:
+            return "out"
+        if self.table_number is not None:
+            return "in_game"
         return "registered" if self.checked_in_at is None else "checked_in"

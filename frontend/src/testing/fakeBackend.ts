@@ -1,8 +1,10 @@
 import { vi } from "vitest";
 import type {
   BlindTemplate,
+  GameState,
   Player,
   Registration,
+  SeatedPlayer,
   Tournament,
   TournamentList,
 } from "../api";
@@ -52,6 +54,7 @@ export function aTournament(overrides: Partial<Tournament> = {}): Tournament {
     reentry_until_level: 2,
     addon_at_level: 2,
     late_registration_until_level: 3,
+    seats_per_table: 9,
     status: "scheduled",
     ...overrides,
   };
@@ -59,6 +62,26 @@ export function aTournament(overrides: Partial<Tournament> = {}): Tournament {
 
 export function aPlayer(overrides: Partial<Player> = {}): Player {
   return { id: 1, name: "Иван Петров", phone: "+79135551234", ...overrides };
+}
+
+/** A tournament's game as the backend returns it, by default not started; override any field. */
+export function aGame(overrides: Partial<GameState> = {}): GameState {
+  return {
+    status: "scheduled",
+    seats_per_table: 9,
+    clock: null,
+    windows: { reentry: false, addon: false, late_registration: false },
+    in_game: [],
+    out: [],
+    waiting: [],
+    suggested_move: null,
+    ...overrides,
+  };
+}
+
+/** A player at the tables, with no re-entries or add-ons unless overridden. */
+export function aSeat(player: Player, table: number, seat: number, overrides: Partial<SeatedPlayer> = {}) {
+  return { player, table, seat, reentries: 0, addons: 0, addon_this_entry: false, ...overrides };
 }
 
 export function json(body: unknown, status = 200) {
@@ -72,7 +95,8 @@ type FakeBackendOptions = {
   loggedIn?: boolean;
   /** Routes such as "POST /api/auth/request-code" that fail as if the server were unreachable. */
   down?: string[];
-  tournaments?: TournamentList;
+  /** `live` may be left out when nothing is running. */
+  tournaments?: Omit<TournamentList, "live"> & { live?: Tournament[] };
   /** Messages a 422 answer carries when a tournament is created or edited. */
   rejectWith?: string[];
   /** The club's own players. */
@@ -82,7 +106,11 @@ type FakeBackendOptions = {
   /** Registrations by tournament id. */
   registrations?: Record<number, Registration[]>;
   registrationOpen?: boolean;
+  /** Defaults to `registrationOpen`. */
+  dropOutOpen?: boolean;
   checkInOpen?: boolean;
+  /** Games by tournament id; a tournament without one has not started. */
+  games?: Record<number, GameState>;
 };
 
 const CONSENT_MISSING = "Без согласия на обработку персональных данных игрока завести нельзя";
@@ -112,13 +140,16 @@ export function fakeBackend({
   leaguePlayers = [],
   registrations = {},
   registrationOpen = true,
+  dropOutOpen = registrationOpen,
   checkInOpen = true,
+  games = {},
 }: FakeBackendOptions = {}) {
   let session = loggedIn;
-  const state: TournamentList = structuredClone(tournaments);
+  const state: TournamentList = { live: [], ...structuredClone(tournaments) };
   const clubPlayers: Player[] = structuredClone(players);
   const league: Player[] = structuredClone(leaguePlayers);
   const signedUp: Record<number, Registration[]> = structuredClone(registrations);
+  const played: Record<number, GameState> = structuredClone(games);
   let nextId = 100;
   const clubTournaments = `/api/clubs/${ME.club.id}/tournaments`;
   const clubPlayersUrl = `/api/clubs/${ME.club.id}/players`;
@@ -148,6 +179,7 @@ export function fakeBackend({
     if (rest === "" && method === "GET") {
       return json({
         registration_open: registrationOpen,
+        drop_out_open: dropOutOpen,
         check_in_open: checkInOpen,
         registrations: [...list].sort((a, b) => byName(a.player, b.player)),
       });
@@ -171,6 +203,87 @@ export function fakeBackend({
     }
     signedUp[tournamentId] = list.filter((r) => r !== registration);
     return new Response(null, { status: 204 });
+  }
+
+  // A much simplified game: enough to show that the admin panel sends each action and shows
+  // the game the backend answers with. The real rules are tested on the backend.
+  function gameRoute(tournamentId: number, rest: string, body?: { table: number; seat: number }) {
+    const game = (played[tournamentId] ??= aGame());
+    const tournament = [...state.live, ...state.upcoming, ...state.past].find((t) => t.id === tournamentId);
+    const seconds = (tournament?.structure ?? []).map((item) => item.duration_minutes * 60);
+    const refuse = (message: string) => json({ detail: message }, 409);
+    const sitAt = (player: Player, table: number, overrides: Partial<SeatedPlayer> = {}) => {
+      const taken = game.in_game.filter((s) => s.table === table).map((s) => s.seat);
+      const seat = [...Array(game.seats_per_table).keys()].map((i) => i + 1).find((n) => !taken.includes(n))!;
+      game.in_game.push(aSeat(player, table, seat, overrides));
+    };
+    const answer = () => {
+      game.in_game.sort((a, b) => a.table - b.table || a.seat - b.seat);
+      game.out.sort((a, b) => a.place - b.place);
+      return json(game);
+    };
+    const clock = game.clock!;
+    switch (rest) {
+      case "/game":
+        return answer();
+      case "/start": {
+        const arrived = game.waiting.filter((r) => r.status === "checked_in");
+        if (arrived.length < 2) return refuse("Для старта нужны хотя бы два пришедших игрока");
+        arrived.forEach((r, i) => sitAt(r.player, Math.floor(i / game.seats_per_table) + 1));
+        game.waiting = game.waiting.filter((r) => r.status !== "checked_in");
+        game.status = "running";
+        game.clock = { running: true, item: 0, seconds_left: seconds[0] };
+        return answer();
+      }
+      case "/pause":
+      case "/resume":
+        game.status = rest === "/pause" ? "paused" : "running";
+        clock.running = rest === "/resume";
+        return answer();
+      case "/next-level":
+      case "/previous-level":
+        clock.item += rest === "/next-level" ? 1 : -1;
+        clock.seconds_left = seconds[clock.item];
+        return answer();
+    }
+    const [, playerId, action] = rest.match(/^\/players\/(\d+)\/([\w-]+)$/) ?? [];
+    const seated = game.in_game.find((s) => s.player.id === Number(playerId));
+    const finished = game.out.find((f) => f.player.id === Number(playerId));
+    if (action === "knock-out" && seated) {
+      game.in_game = game.in_game.filter((s) => s !== seated);
+      const { player, reentries, addons } = seated;
+      game.out.push({ player, reentries, addons, place: game.in_game.length + 1 });
+      if (game.in_game.length === 1) {
+        const [winner] = game.in_game;
+        game.out.push({ player: winner.player, reentries: winner.reentries, addons: winner.addons, place: 1 });
+        game.in_game = [];
+        game.status = "finished";
+        clock.running = false;
+      }
+      return answer();
+    }
+    if (action === "reentry" && finished) {
+      game.out = game.out.filter((f) => f !== finished);
+      sitAt(finished.player, 1, { reentries: finished.reentries + 1, addons: finished.addons });
+      return answer();
+    }
+    if (action === "addon" && seated) {
+      seated.addons += 1;
+      seated.addon_this_entry = true;
+      return answer();
+    }
+    if (action === "move" && seated && body) {
+      Object.assign(seated, body);
+      game.suggested_move = null;
+      return answer();
+    }
+    const player = clubPlayers.find((p) => p.id === Number(playerId));
+    if (action === "seat" && player) {
+      game.waiting = game.waiting.filter((r) => r.player.id !== player.id);
+      sitAt(player, 1);
+      return answer();
+    }
+    return json({ detail: "Not Found" }, 404);
   }
 
   const fetch = vi.fn(async (url: string, init?: RequestInit) => {
@@ -218,6 +331,12 @@ export function fakeBackend({
     const registrationsMatch = url.match(/^\/api\/clubs\/\d+\/tournaments\/(\d+)\/registrations(.*)$/);
     if (registrationsMatch) {
       return registrationsRoute(method, Number(registrationsMatch[1]), registrationsMatch[2], body);
+    }
+    const gameMatch = url.match(
+      /^\/api\/clubs\/\d+\/tournaments\/(\d+)(\/(?:game|start|pause|resume|next-level|previous-level|players\/.+))$/,
+    );
+    if (gameMatch) {
+      return gameRoute(Number(gameMatch[1]), gameMatch[2], body);
     }
     const [, id, action] = url.match(/^\/api\/clubs\/\d+\/tournaments\/(\d+)(\/cancel)?$/) ?? [];
     const tournament = state.upcoming.find((t) => t.id === Number(id));

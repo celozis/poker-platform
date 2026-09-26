@@ -178,4 +178,32 @@ describe("tournament registrations", () => {
     expect(screen.queryByRole("searchbox")).not.toBeInTheDocument();
     expect(screen.getByText(/Регистрация закрыта/)).toBeInTheDocument();
   });
+
+  it("shows who plays and who is out once the tournament is running", async () => {
+    const live = aTournament({ id: 7, name: "Субботний турнир", status: "running" });
+    const petr = aPlayer({ id: 3, name: "Пётр Сидоров", phone: "+79131110003" });
+    fakeBackend({
+      loggedIn: true,
+      tournaments: { live: [live], upcoming: [], past: [] },
+      players: [IVAN, MARIA, petr],
+      registrations: {
+        7: [
+          { player: IVAN, status: "in_game" },
+          { player: MARIA, status: "out" },
+          { player: petr, status: "registered" },
+        ],
+      },
+      // Late registration is open, dropping out is not.
+      registrationOpen: true,
+      dropOutOpen: false,
+      checkInOpen: false,
+    });
+    await openRegistrations("Субботний турнир");
+
+    const list = registered();
+    expect(await within(list).findByRole("listitem", { name: "Иван Петров" })).toHaveTextContent("В игре");
+    expect(within(list).getByRole("listitem", { name: "Мария Иванова" })).toHaveTextContent("Игра окончена");
+    expect(within(list).queryByRole("button", { name: "Снять с регистрации" })).not.toBeInTheDocument();
+    expect(screen.getByRole("searchbox", { name: "Найти игрока клуба" })).toBeInTheDocument();
+  });
 });

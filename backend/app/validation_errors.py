@@ -16,6 +16,7 @@ _FIELDS = {
     "reentry_until_level": "Re-entry",
     "addon_at_level": "Add-on",
     "late_registration_until_level": "Поздняя регистрация",
+    "seats_per_table": "Мест за столом",
     "small_blind": "малый блайнд",
     "big_blind": "большой блайнд",
     "ante": "анте",
@@ -26,6 +27,8 @@ _FIELDS = {
     "tournament_id": "Номер турнира",
     "consent": "Согласие на обработку данных",
     "player_id": "Номер игрока",
+    "table": "Стол",
+    "seat": "Место",
 }
 
 _PROBLEMS = {

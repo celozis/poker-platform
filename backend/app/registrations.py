@@ -1,4 +1,5 @@
-"""Players registered for a club tournament, and their check-in on the day.
+"""Players registered for a club tournament, and their check-in on the day. Once the tournament
+is running, players are seated and knocked out in app/game.py.
 
 Club-scoped like everything under /api/clubs/{club_id} (ADR-0003): the tournament and the player
 are looked up only among the club's own."""
@@ -11,6 +12,7 @@ from sqlalchemy.orm import contains_eager
 
 from app.auth import DbSession, Now
 from app.clubs import AdminClub
+from app.game import late_registration_closed_because
 from app.models import Club, ClubPlayer, Player, Registration, Tournament
 from app.schemas import RegistrationIn, RegistrationOut, TournamentRegistrations
 from app.tournaments import club_tournament
@@ -24,17 +26,30 @@ CHECK_IN_WINDOW = timedelta(hours=CHECK_IN_HOURS)
 
 
 def _registration_closed_because(tournament: Tournament, now: datetime) -> str | None:
-    """Players sign up for an upcoming tournament; late registration is not supported yet."""
+    """Players sign up until the tournament is started, however late that is, and afterwards
+    while its late registration is open."""
     if tournament.status == "cancelled":
         return "Турнир отменён, регистрация закрыта"
-    if tournament.has_started(now):
-        return "Турнир уже начался, регистрация закрыта"
+    if tournament.status == "finished":
+        return "Турнир завершён, регистрация закрыта"
+    if tournament.is_live:
+        return late_registration_closed_because(tournament, now)
+    return None
+
+
+def _dropping_out_closed_because(tournament: Tournament) -> str | None:
+    if tournament.status == "cancelled":
+        return "Турнир отменён, регистрация закрыта"
+    if tournament.has_started:
+        return "Турнир уже начался, снять с регистрации нельзя"
     return None
 
 
 def _check_in_closed_because(tournament: Tournament, now: datetime) -> str | None:
     if tournament.status == "cancelled":
         return "Турнир отменён"
+    if tournament.has_started:
+        return "Турнир уже начался: опоздавшего сажают через позднюю регистрацию"
     if now < tournament.starts_at - CHECK_IN_WINDOW:
         return f"Отметка о приходе откроется за {CHECK_IN_HOURS} часов до начала турнира"
     if now > tournament.starts_at + CHECK_IN_WINDOW:
@@ -75,6 +90,7 @@ def list_registrations(
     ).all()
     return TournamentRegistrations(
         registration_open=_registration_closed_because(tournament, now) is None,
+        drop_out_open=_dropping_out_closed_because(tournament) is None,
         check_in_open=_check_in_closed_because(tournament, now) is None,
         registrations=[RegistrationOut.model_validate(r) for r in registrations]
     )
@@ -114,7 +130,7 @@ def cancel_registration(
     tournament_id: int, player_id: int, club: AdminClub, session: DbSession, now: Now
 ) -> None:
     tournament = club_tournament(session, club, tournament_id, for_update=True)
-    closed = _registration_closed_because(tournament, now)
+    closed = _dropping_out_closed_because(tournament)
     if closed:
         raise HTTPException(status.HTTP_409_CONFLICT, closed)
     session.delete(_registered(session, tournament, player_id))

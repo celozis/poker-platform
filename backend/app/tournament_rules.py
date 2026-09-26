@@ -9,6 +9,7 @@ from app.schemas import BlindLevel, TournamentIn
 
 MAX_NAME_LENGTH = 200  # models.Tournament.name
 MAX_AMOUNT = 2_147_483_647  # PostgreSQL integer, the type of buy_in and starting_stack
+MIN_SEATS, MAX_SEATS = 2, 10  # seats per table: from heads-up to a full ten-seat table
 
 
 def _field_errors(tournament: TournamentIn, now: datetime) -> list[str]:
@@ -27,6 +28,8 @@ def _field_errors(tournament: TournamentIn, now: datetime) -> list[str]:
         errors.append("Стартовый стек должен быть больше нуля")
     if tournament.starting_stack > MAX_AMOUNT:
         errors.append("Стартовый стек слишком большой")
+    if not MIN_SEATS <= tournament.seats_per_table <= MAX_SEATS:
+        errors.append(f"Мест за столом: от {MIN_SEATS} до {MAX_SEATS}")
     return errors
 
 

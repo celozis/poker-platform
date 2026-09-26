@@ -35,14 +35,25 @@ def _check_rules(tournament: TournamentIn, now: datetime) -> None:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, errors)
 
 
+def _section(tournament: Tournament, now: datetime) -> str:
+    """Upcoming until started (however late), live while running or paused, then past.
+    A cancelled tournament never starts, so it moves to the past at its start time."""
+    if tournament.status == "cancelled":
+        return "upcoming" if tournament.starts_at > now else "past"
+    if tournament.status == "scheduled":
+        return "upcoming"
+    return "live" if tournament.is_live else "past"
+
+
 @router.get("")
 def list_tournaments(club: AdminClub, session: DbSession, now: Now) -> TournamentList:
     tournaments = session.scalars(
         select(Tournament).where(Tournament.club_id == club.id).order_by(Tournament.starts_at)
     ).all()
     return TournamentList(
-        upcoming=[TournamentOut.model_validate(t) for t in tournaments if not t.has_started(now)],
-        past=[TournamentOut.model_validate(t) for t in reversed(tournaments) if t.has_started(now)],
+        live=[TournamentOut.model_validate(t) for t in tournaments if _section(t, now) == "live"],
+        upcoming=[TournamentOut.model_validate(t) for t in tournaments if _section(t, now) == "upcoming"],
+        past=[TournamentOut.model_validate(t) for t in reversed(tournaments) if _section(t, now) == "past"],
     )
 
 
@@ -62,7 +73,7 @@ def update_tournament(
     tournament_id: int, body: TournamentIn, club: AdminClub, session: DbSession, now: Now
 ) -> TournamentOut:
     tournament = club_tournament(session, club, tournament_id, for_update=True)
-    if tournament.has_started(now):
+    if tournament.has_started:
         raise HTTPException(status.HTTP_409_CONFLICT, "Турнир уже начался, его нельзя изменить")
     if tournament.status == "cancelled":
         raise HTTPException(status.HTTP_409_CONFLICT, "Турнир отменён, его нельзя изменить")
@@ -78,7 +89,7 @@ def cancel_tournament(
     tournament_id: int, club: AdminClub, session: DbSession, now: Now
 ) -> TournamentOut:
     tournament = club_tournament(session, club, tournament_id, for_update=True)
-    if tournament.has_started(now):
+    if tournament.has_started:
         raise HTTPException(status.HTTP_409_CONFLICT, "Турнир уже начался, его нельзя отменить")
     tournament.status = "cancelled"
     session.commit()
