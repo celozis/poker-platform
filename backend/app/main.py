@@ -8,7 +8,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from app import auth, blind_templates, clubs, tournaments
+from app import auth, blind_templates, clubs, players, registrations, tournaments
 from app.db import get_session
 from app.validation_errors import russian_validation_errors
 
@@ -27,6 +27,8 @@ app.include_router(auth.router)
 app.include_router(clubs.router)
 app.include_router(tournaments.router)
 app.include_router(blind_templates.router)
+app.include_router(players.router)
+app.include_router(registrations.router)
 
 
 class Health(BaseModel):

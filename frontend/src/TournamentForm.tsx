@@ -6,10 +6,8 @@ import {
   type Tournament,
   type TournamentInput,
 } from "./api";
-import { inputClass, SERVER_UNREACHABLE } from "./forms";
+import { inputClass, labelClass, SERVER_UNREACHABLE } from "./forms";
 import StructureEditor, { fromRows, type StructureRow, toRows } from "./StructureEditor";
-
-const labelClass = "flex flex-col gap-1 text-sm text-slate-700";
 
 const pad = (value: number) => String(value).padStart(2, "0");
 

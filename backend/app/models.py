@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import DateTime, ForeignKey, String
+from sqlalchemy import DateTime, ForeignKey, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -72,3 +72,47 @@ class Tournament(Base):
     def has_started(self, now: datetime) -> bool:
         # There is no "start" action yet, so a tournament starts at its start time.
         return self.starts_at <= now
+
+
+class Player(Base):
+    """A person who plays in the league. One per phone number across all clubs, so no club_id
+    (ADR-0003); a club reaches its players through ClubPlayer."""
+
+    __tablename__ = "players"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(200))
+    phone: Mapped[str] = mapped_column(String(16), unique=True)
+    # When the player first agreed to the processing of personal data (152-ФЗ).
+    consent_given_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class ClubPlayer(Base):
+    """A player on a club's own list: someone who has been to this club."""
+
+    __tablename__ = "club_players"
+
+    club_id: Mapped[int] = mapped_column(ForeignKey("clubs.id"), primary_key=True)
+    player_id: Mapped[int] = mapped_column(ForeignKey("players.id"), primary_key=True, index=True)
+    added_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class Registration(Base):
+    """A player signed up for a tournament; checked in once they have come to the club."""
+
+    __tablename__ = "registrations"
+    # A player is registered for a tournament at most once.
+    __table_args__ = (UniqueConstraint("tournament_id", "player_id"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    club_id: Mapped[int] = mapped_column(ForeignKey("clubs.id"), index=True)
+    tournament_id: Mapped[int] = mapped_column(ForeignKey("tournaments.id"), index=True)
+    player_id: Mapped[int] = mapped_column(ForeignKey("players.id"), index=True)
+    registered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    checked_in_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    player: Mapped[Player] = relationship()
+
+    @property
+    def status(self) -> str:
+        return "registered" if self.checked_in_at is None else "checked_in"

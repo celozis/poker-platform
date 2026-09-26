@@ -10,15 +10,6 @@ from tests.login import log_in
 from tests.tournaments import a_break, a_level, a_tournament
 
 
-@pytest.fixture
-def club(client: TestClient, caplog: pytest.LogCaptureFixture, clock: FakeClock) -> Club:
-    """A club whose admin is logged in, with the clock fixed at 2026-09-26 12:00 UTC."""
-    club = create_club(name="Покер-клуб «Обь»")
-    create_admin(club, phone="+79130000001")
-    log_in(client, caplog, "+79130000001")
-    return club
-
-
 def test_admin_creates_a_tournament_from_a_league_template(client: TestClient, club: Club) -> None:
     templates = client.get("/api/blind-templates").json()
     structure = templates[0]["structure"]

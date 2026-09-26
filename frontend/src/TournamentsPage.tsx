@@ -9,15 +9,10 @@ import {
   RejectedError,
   updateTournament,
 } from "./api";
+import { startFormat } from "./dates";
+import RegistrationsPage from "./RegistrationsPage";
 import TournamentForm from "./TournamentForm";
 
-const startFormat = new Intl.DateTimeFormat("ru-RU", {
-  weekday: "short",
-  day: "numeric",
-  month: "long",
-  hour: "2-digit",
-  minute: "2-digit",
-});
 const numberFormat = new Intl.NumberFormat("ru-RU");
 
 type ListState =
@@ -25,9 +20,14 @@ type ListState =
   | { status: "loaded"; tournaments: TournamentList }
   | { status: "failed" };
 
-type View = { screen: "list" } | { screen: "create" } | { screen: "edit"; tournament: Tournament };
+type View =
+  | { screen: "list" }
+  | { screen: "create" }
+  | { screen: "edit"; tournament: Tournament }
+  | { screen: "registrations"; tournament: Tournament };
 
-/** The club's tournaments: upcoming ones can be edited or cancelled, past ones only viewed. */
+/** The club's tournaments: upcoming ones can be edited or cancelled, past ones only viewed.
+ * Every tournament opens its registrations. */
 export default function TournamentsPage({ club }: { club: Club }) {
   const [list, setList] = useState<ListState>({ status: "loading" });
   const [view, setView] = useState<View>({ screen: "list" });
@@ -57,6 +57,10 @@ export default function TournamentsPage({ club }: { club: Club }) {
             : "Не удалось отменить турнир: нет связи с сервером. Попробуйте ещё раз.",
         ),
       );
+  }
+
+  if (view.screen === "registrations") {
+    return <RegistrationsPage club={club} tournament={view.tournament} onBack={backToList} />;
   }
 
   if (view.screen !== "list") {
@@ -103,6 +107,7 @@ export default function TournamentsPage({ club }: { club: Club }) {
             title="Предстоящие"
             empty="Предстоящих турниров нет"
             tournaments={list.tournaments.upcoming}
+            onOpen={(tournament) => setView({ screen: "registrations", tournament })}
             onEdit={(tournament) => setView({ screen: "edit", tournament })}
             onCancel={cancel}
           />
@@ -110,6 +115,7 @@ export default function TournamentsPage({ club }: { club: Club }) {
             title="Прошедшие"
             empty="Прошедших турниров пока нет"
             tournaments={list.tournaments.past}
+            onOpen={(tournament) => setView({ screen: "registrations", tournament })}
           />
         </div>
       )}
@@ -121,12 +127,14 @@ function TournamentSection({
   title,
   empty,
   tournaments,
+  onOpen,
   onEdit,
   onCancel,
 }: {
   title: string;
   empty: string;
   tournaments: Tournament[];
+  onOpen: (tournament: Tournament) => void;
   /** Given only for tournaments that have not started yet. */
   onEdit?: (tournament: Tournament) => void;
   onCancel?: (tournament: Tournament) => void;
@@ -147,6 +155,7 @@ function TournamentSection({
               <TournamentRow
                 key={tournament.id}
                 tournament={tournament}
+                onOpen={() => onOpen(tournament)}
                 onEdit={onEdit && manageable ? () => onEdit(tournament) : undefined}
                 onCancel={onCancel && manageable ? () => onCancel(tournament) : undefined}
               />
@@ -160,10 +169,12 @@ function TournamentSection({
 
 function TournamentRow({
   tournament,
+  onOpen,
   onEdit,
   onCancel,
 }: {
   tournament: Tournament;
+  onOpen: () => void;
   onEdit?: () => void;
   onCancel?: () => void;
 }) {
@@ -184,28 +195,33 @@ function TournamentRow({
       {cancelled && (
         <span className="rounded-full bg-slate-100 px-3 py-1 text-sm text-slate-600">Отменён</span>
       )}
-      {(onEdit || onCancel) && (
-        <div className="flex gap-2">
-          {onEdit && (
-            <button
-              type="button"
-              onClick={onEdit}
-              className="rounded-lg border border-slate-300 px-3 py-1 text-sm"
-            >
-              Изменить
-            </button>
-          )}
-          {onCancel && (
-            <button
-              type="button"
-              onClick={onCancel}
-              className="rounded-lg border border-red-200 px-3 py-1 text-sm text-red-700"
-            >
-              Отменить турнир
-            </button>
-          )}
-        </div>
-      )}
+      <div className="flex flex-wrap gap-2">
+        <button
+          type="button"
+          onClick={onOpen}
+          className="rounded-lg border border-slate-300 px-3 py-1 text-sm"
+        >
+          Регистрации
+        </button>
+        {onEdit && (
+          <button
+            type="button"
+            onClick={onEdit}
+            className="rounded-lg border border-slate-300 px-3 py-1 text-sm"
+          >
+            Изменить
+          </button>
+        )}
+        {onCancel && (
+          <button
+            type="button"
+            onClick={onCancel}
+            className="rounded-lg border border-red-200 px-3 py-1 text-sm text-red-700"
+          >
+            Отменить турнир
+          </button>
+        )}
+      </div>
     </li>
   );
 }

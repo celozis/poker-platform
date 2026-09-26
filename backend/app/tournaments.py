@@ -15,13 +15,15 @@ from app.tournament_rules import tournament_errors
 router = APIRouter(prefix="/api/clubs/{club_id}/tournaments")
 
 
-def _club_tournament_for_update(session: DbSession, club: Club, tournament_id: int) -> Tournament:
-    # Locked so that a parallel edit and cancel cannot both pass the checks below them.
-    tournament = session.scalar(
-        select(Tournament)
-        .where(Tournament.id == tournament_id, Tournament.club_id == club.id)
-        .with_for_update()
+def club_tournament(
+    session: DbSession, club: Club, tournament_id: int, *, for_update: bool = False
+) -> Tournament:
+    """The club's own tournament, or 404. Changes lock it (`for_update`), so that two parallel
+    changes cannot both pass the checks made before them."""
+    statement = select(Tournament).where(
+        Tournament.id == tournament_id, Tournament.club_id == club.id
     )
+    tournament = session.scalar(statement.with_for_update() if for_update else statement)
     if tournament is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Турнир не найден")
     return tournament
@@ -59,7 +61,7 @@ def create_tournament(
 def update_tournament(
     tournament_id: int, body: TournamentIn, club: AdminClub, session: DbSession, now: Now
 ) -> TournamentOut:
-    tournament = _club_tournament_for_update(session, club, tournament_id)
+    tournament = club_tournament(session, club, tournament_id, for_update=True)
     if tournament.has_started(now):
         raise HTTPException(status.HTTP_409_CONFLICT, "Турнир уже начался, его нельзя изменить")
     if tournament.status == "cancelled":
@@ -75,7 +77,7 @@ def update_tournament(
 def cancel_tournament(
     tournament_id: int, club: AdminClub, session: DbSession, now: Now
 ) -> TournamentOut:
-    tournament = _club_tournament_for_update(session, club, tournament_id)
+    tournament = club_tournament(session, club, tournament_id, for_update=True)
     if tournament.has_started(now):
         raise HTTPException(status.HTTP_409_CONFLICT, "Турнир уже начался, его нельзя отменить")
     tournament.status = "cancelled"

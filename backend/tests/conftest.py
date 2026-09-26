@@ -1,6 +1,7 @@
 import os
 from collections.abc import Iterator
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 from alembic import command
@@ -10,6 +11,9 @@ from sqlalchemy import text
 from sqlalchemy.engine import make_url
 
 from tests.clock import FakeClock
+
+if TYPE_CHECKING:
+    from app.models import Club
 
 # Tests run against a real PostgreSQL database, never against the dev one.
 TEST_DATABASE_URL = os.environ.get(
@@ -64,3 +68,15 @@ def clock() -> Iterator[FakeClock]:
     app.dependency_overrides[get_now] = fake
     yield fake
     del app.dependency_overrides[get_now]
+
+
+@pytest.fixture
+def club(client: TestClient, caplog: pytest.LogCaptureFixture, clock: FakeClock) -> "Club":
+    """A club whose admin is logged in, with the clock fixed at 2026-09-26 12:00 UTC."""
+    from tests.factories import create_admin, create_club
+    from tests.login import log_in
+
+    club = create_club(name="Покер-клуб «Обь»")
+    create_admin(club, phone="+79130000001")
+    log_in(client, caplog, "+79130000001")
+    return club

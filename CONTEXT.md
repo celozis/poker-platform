@@ -37,11 +37,17 @@ We're building a system to replace manual tournament management (spreadsheets, c
 
 ### Players & Identity
 
-**Player**: A person who plays tournaments. Has a profile (phone, name, Telegram/VK ID), status (Guest → Regular → VIP, per ЮДС loyalty system), and rating.
+**Player**: A person who plays tournaments. Has a profile (phone, name, Telegram/VK ID), status (Guest → Regular → VIP, per ЮДС loyalty system), and rating. One player per phone number across the whole league: a person who plays in several clubs is the same player everywhere (ADR-0005).
+
+**Club Player List**: The players who have been to a club. An admin sees, searches and registers only their own club's players. Entering a phone the league already knows adds that player to the club instead of creating a second one; the existing name is kept.
+
+**Consent (согласие на обработку персональных данных)**: The player's agreement to the processing of personal data under 152-ФЗ. The admin ticks it when adding a player; without it no player is added.
 
 **Status**: Player's loyalty tier (auto-calculated from number of games, ЮДС integration). Affects discount on buy-in.
 
-**Registration**: Player signs up for a tournament. States: Pending → Checked In → In Game → Out (place assigned) → Final Results.
+**Registration**: A club player signed up for a tournament, at most once per tournament. States: Registered → Checked In → In Game → Out (place assigned) → Final Results; so far only Registered and Checked In exist. Players sign up and drop out only while the tournament is upcoming and not cancelled (late registration is not supported yet).
+
+**Check-in**: Marking on the day that a registered player has come to the club. Open from 12 hours before the tournament's start to 12 hours after it, so latecomers can still be checked in; a mistaken check-in can be taken back within the same window. Clubs have no time zone yet, which is why this is a window around the start rather than a calendar day.
 
 ### Tournaments
 
@@ -133,6 +139,7 @@ Rule levels always refer to blind level numbers (breaks not counted) and must ex
 - **Telegram Bot** (aiogram, Python): Primary player entry point.
 - **Web Frontend** (React, TS): Admin Panel, Player Cabinet, Dealer Cabinet, Tabletop.
 - **Database** (PostgreSQL): Multi-tenant via shared tables with a `club_id` column; access is enforced by the `AdminClub` dependency on every `/api/clubs/{club_id}/...` route (ADR-0003). Accessed via SQLAlchemy 2 with sync sessions (ADR-0002); Alembic migrations run automatically on backend start.
+- **Players**: League-wide `players` (one per phone), each club's list in `club_players`, and `registrations` of a club's players for its tournaments (ADR-0005).
 - **Integrations**: iiko (cashier), ЮДС (loyalty), Telegram API, VK ID (auth).
 
 **MVP (Phase 1):**

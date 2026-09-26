@@ -24,6 +24,8 @@ _FIELDS = {
     "code": "Код",
     "club_id": "Номер клуба",
     "tournament_id": "Номер турнира",
+    "consent": "Согласие на обработку данных",
+    "player_id": "Номер игрока",
 }
 
 _PROBLEMS = {
@@ -32,6 +34,8 @@ _PROBLEMS = {
     "int_parsing": "нужно целое число",
     "int_from_float": "нужно целое число",
     "string_type": "нужен текст",
+    "bool_type": "нужно да или нет",
+    "bool_parsing": "нужно да или нет",
     "datetime_type": "нужны дата и время",
     "datetime_parsing": "нужны дата и время",
     "datetime_from_date_parsing": "нужны дата и время",

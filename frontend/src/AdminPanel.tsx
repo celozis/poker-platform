@@ -1,10 +1,16 @@
+import { useState } from "react";
 import type { Me } from "./api";
 import LeagueBrand from "./LeagueBrand";
+import PlayersPage from "./PlayersPage";
 import TournamentsPage from "./TournamentsPage";
+
+const SECTIONS = ["Турниры", "Игроки"] as const;
+type Section = (typeof SECTIONS)[number];
 
 /** The club admin's workspace, dressed in the club's own logo and colours. */
 export default function AdminPanel({ me, onLogout }: { me: Me; onLogout: () => void }) {
   const { admin, club } = me;
+  const [section, setSection] = useState<Section>("Турниры");
 
   return (
     <>
@@ -34,7 +40,23 @@ export default function AdminPanel({ me, onLogout }: { me: Me; onLogout: () => v
         <div className="h-1" style={{ backgroundColor: club.accent_color }} />
       </header>
       <main className="mx-auto w-full max-w-5xl flex-1 px-4 py-8">
-        <TournamentsPage club={club} />
+        <nav aria-label="Разделы" className="mb-6 flex gap-2">
+          {SECTIONS.map((name) => (
+            <button
+              key={name}
+              type="button"
+              aria-current={section === name ? "page" : undefined}
+              onClick={() => setSection(name)}
+              className={`rounded-lg px-4 py-2 font-medium ${
+                section === name ? "text-white" : "bg-white text-slate-700 shadow-sm"
+              }`}
+              style={section === name ? { backgroundColor: club.primary_color } : undefined}
+            >
+              {name}
+            </button>
+          ))}
+        </nav>
+        {section === "Турниры" ? <TournamentsPage club={club} /> : <PlayersPage club={club} />}
         <LeagueBrand className="mt-8 justify-center text-slate-500" />
       </main>
     </>

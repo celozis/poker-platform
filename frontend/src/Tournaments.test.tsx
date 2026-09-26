@@ -9,6 +9,12 @@ function sentBody(fetch: ReturnType<typeof fakeBackend>, method: string, url: Re
   return call && JSON.parse(String(call[1]?.body));
 }
 
+function buttonNames(element: HTMLElement) {
+  return within(element)
+    .queryAllByRole("button")
+    .map((button) => button.textContent);
+}
+
 afterEach(() => {
   vi.unstubAllGlobals();
 });
@@ -36,12 +42,12 @@ describe("club tournaments", () => {
     expect(within(friday).getByRole("button", { name: "Изменить" })).toBeInTheDocument();
     const cancelled = within(upcoming).getByRole("listitem", { name: "Отменённый турнир" });
     expect(cancelled).toHaveTextContent("Отменён");
-    expect(within(cancelled).queryByRole("button")).not.toBeInTheDocument();
+    expect(buttonNames(cancelled)).toEqual(["Регистрации"]);  // no editing or cancelling
 
     const past = screen.getByRole("region", { name: "Прошедшие" });
     const summer = within(past).getByRole("listitem", { name: "Летний кубок" });
     expect(summer).toHaveTextContent("1 августа");
-    expect(within(summer).queryByRole("button")).not.toBeInTheDocument();
+    expect(buttonNames(summer)).toEqual(["Регистрации"]);  // no editing or cancelling
   });
 
   it("creates a tournament from a league template with an adjusted structure", async () => {
@@ -164,7 +170,7 @@ describe("club tournaments", () => {
 
     expect(confirm).toHaveBeenCalledWith(expect.stringContaining("«Пятничный турнир»"));
     expect(await within(row).findByText("Отменён")).toBeInTheDocument();
-    expect(within(row).queryByRole("button")).not.toBeInTheDocument();
+    expect(buttonNames(row)).toEqual(["Регистрации"]);  // no editing or cancelling
     expect(fetch).toHaveBeenCalledWith(
       "/api/clubs/7/tournaments/5/cancel",
       expect.objectContaining({ method: "POST" }),

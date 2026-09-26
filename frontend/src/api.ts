@@ -41,7 +41,33 @@ export type Tournament = TournamentInput & { id: number; status: "scheduled" | "
 
 export type TournamentList = { upcoming: Tournament[]; past: Tournament[] };
 
-function sendJson(method: "POST" | "PUT", url: string, body?: unknown): Promise<Response> {
+/** A league player on the club's list. */
+export type Player = { id: number; name: string; phone: string };
+
+/** `consent`: the player agreed to the processing of personal data (152-ФЗ). */
+export type PlayerInput = { name: string; phone: string; consent: boolean };
+
+/** created: new in the league; added_to_club: known in the league, now also in this club. */
+export type PlayerAdded = {
+  player: Player;
+  outcome: "created" | "added_to_club" | "already_in_club";
+};
+
+export type Registration = { player: Player; status: "registered" | "checked_in" };
+
+export type TournamentRegistrations = {
+  /** Players can sign up or drop out: the tournament is upcoming and not cancelled. */
+  registration_open: boolean;
+  /** Arrivals can be checked in: from 12 hours before the start to 12 hours after it. */
+  check_in_open: boolean;
+  registrations: Registration[];
+};
+
+function sendJson(
+  method: "POST" | "PUT" | "DELETE",
+  url: string,
+  body?: unknown,
+): Promise<Response> {
   return fetch(url, {
     method,
     headers: { "Content-Type": "application/json" },
@@ -99,7 +125,7 @@ export async function fetchBlindTemplates(): Promise<BlindTemplate[]> {
   return response.json();
 }
 
-/** The server refused to save: the data breaks a rule (422) or the tournament is locked (409). */
+/** The server refused: the data breaks a rule (422) or the action is not allowed now (409). */
 export class RejectedError extends Error {
   messages: string[];
 
@@ -109,12 +135,16 @@ export class RejectedError extends Error {
   }
 }
 
-async function savedTournament(response: Response): Promise<Tournament> {
+async function throwIfRejected(response: Response): Promise<void> {
   if (response.status === 422 || response.status === 409) {
     const { detail } = await response.json();
     throw new RejectedError(Array.isArray(detail) ? detail : [detail]);
   }
   if (!response.ok) throw failed(response);
+}
+
+async function accepted<T>(response: Response): Promise<T> {
+  await throwIfRejected(response);
   return response.json();
 }
 
@@ -122,7 +152,7 @@ export async function createTournament(
   clubId: number,
   tournament: TournamentInput,
 ): Promise<Tournament> {
-  return savedTournament(await sendJson("POST", clubTournamentsUrl(clubId), tournament));
+  return accepted(await sendJson("POST", clubTournamentsUrl(clubId), tournament));
 }
 
 export async function updateTournament(
@@ -131,10 +161,68 @@ export async function updateTournament(
   tournament: TournamentInput,
 ): Promise<Tournament> {
   const url = `${clubTournamentsUrl(clubId)}/${tournamentId}`;
-  return savedTournament(await sendJson("PUT", url, tournament));
+  return accepted(await sendJson("PUT", url, tournament));
 }
 
 export async function cancelTournament(clubId: number, tournamentId: number): Promise<Tournament> {
   const url = `${clubTournamentsUrl(clubId)}/${tournamentId}/cancel`;
-  return savedTournament(await postJson(url));
+  return accepted(await postJson(url));
+}
+
+function clubPlayersUrl(clubId: number): string {
+  return `/api/clubs/${clubId}/players`;
+}
+
+/** The club's players in name order; `query` narrows them down by name or phone. */
+export async function fetchPlayers(clubId: number, query = ""): Promise<Player[]> {
+  const search = query.trim() ? `?${new URLSearchParams({ q: query.trim() })}` : "";
+  const response = await fetch(`${clubPlayersUrl(clubId)}${search}`);
+  if (!response.ok) throw failed(response);
+  return response.json();
+}
+
+export async function addPlayer(clubId: number, player: PlayerInput): Promise<PlayerAdded> {
+  return accepted(await postJson(clubPlayersUrl(clubId), player));
+}
+
+function registrationsUrl(clubId: number, tournamentId: number): string {
+  return `${clubTournamentsUrl(clubId)}/${tournamentId}/registrations`;
+}
+
+export async function fetchRegistrations(
+  clubId: number,
+  tournamentId: number,
+): Promise<TournamentRegistrations> {
+  const response = await fetch(registrationsUrl(clubId, tournamentId));
+  if (!response.ok) throw failed(response);
+  return response.json();
+}
+
+export async function registerPlayer(
+  clubId: number,
+  tournamentId: number,
+  playerId: number,
+): Promise<Registration> {
+  const url = registrationsUrl(clubId, tournamentId);
+  return accepted(await postJson(url, { player_id: playerId }));
+}
+
+export async function cancelRegistration(
+  clubId: number,
+  tournamentId: number,
+  playerId: number,
+): Promise<void> {
+  const url = `${registrationsUrl(clubId, tournamentId)}/${playerId}`;
+  await throwIfRejected(await sendJson("DELETE", url));
+}
+
+/** Marks the player as arrived (`arrived`), or takes a mistaken check-in back. */
+export async function setCheckedIn(
+  clubId: number,
+  tournamentId: number,
+  playerId: number,
+  arrived: boolean,
+): Promise<Registration> {
+  const url = `${registrationsUrl(clubId, tournamentId)}/${playerId}/check-in`;
+  return accepted(await sendJson(arrived ? "POST" : "DELETE", url));
 }

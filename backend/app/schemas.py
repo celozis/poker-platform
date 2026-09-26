@@ -81,3 +81,50 @@ class TournamentOut(TournamentIn):
 class TournamentList(BaseModel):
     upcoming: list[TournamentOut]
     past: list[TournamentOut]
+
+
+class PlayerIn(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    name: str
+    phone: str
+    # The player agreed to the processing of personal data (152-ФЗ).
+    consent: bool
+
+
+class PlayerOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    name: str
+    phone: str
+
+
+# created: a new league player; added_to_club: already in the league, now also in this club;
+# already_in_club: nothing changed.
+AddPlayerOutcome = Literal["created", "added_to_club", "already_in_club"]
+
+
+class PlayerAdded(BaseModel):
+    player: PlayerOut
+    outcome: AddPlayerOutcome
+
+
+class RegistrationIn(BaseModel):
+    player_id: int
+
+
+class RegistrationOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    player: PlayerOut
+    # registered: signed up; checked_in: has come to the club on the day.
+    status: Literal["registered", "checked_in"]
+
+
+class TournamentRegistrations(BaseModel):
+    # Whether players can still sign up or drop out: the tournament is upcoming and not cancelled.
+    registration_open: bool
+    # Whether arrivals can be checked in: from 12 hours before the start to 12 hours after it.
+    check_in_open: bool
+    registrations: list[RegistrationOut]
