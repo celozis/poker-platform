@@ -263,6 +263,39 @@ def seated(game: dict[str, Any], player: dict[str, Any]) -> dict[str, Any]:
     return seat
 
 
+def test_a_mistaken_knock_out_is_undone_without_counting_as_a_reentry(
+    client: TestClient, club: Club, clock: FakeClock
+) -> None:
+    # No re-entry offered, and long past every window: undoing is not a re-entry.
+    url, players = ready_tournament(client, club, arrived=4, reentry_until_level=None)
+    client.post(f"{url}/start")
+    clock.advance(timedelta(hours=2))
+    client.post(f"{url}/players/{players[0]['id']}/knock-out")
+    client.post(f"{url}/players/{players[1]['id']}/knock-out")
+
+    undone = client.post(f"{url}/players/{players[0]['id']}/undo-knock-out")
+
+    assert undone.status_code == 200
+    game = undone.json()
+    assert seated(game, players[0])["reentries"] == 0
+    # Гость 02 is now the only one out, and the first of four to finish.
+    assert places(game) == [("Гость 02", 4)]
+
+
+def test_only_a_knocked_out_player_of_a_live_tournament_comes_back(
+    client: TestClient, club: Club
+) -> None:
+    url, players = ready_tournament(client, club, arrived=2)
+    client.post(f"{url}/start")
+
+    in_game = client.post(f"{url}/players/{players[0]['id']}/undo-knock-out")
+    client.post(f"{url}/players/{players[0]['id']}/knock-out")  # the last knock-out finishes it
+    finished = client.post(f"{url}/players/{players[0]['id']}/undo-knock-out")
+
+    assert (in_game.status_code, in_game.json()["detail"]) == (409, "Игрок Гость 01 ещё в игре")
+    assert (finished.status_code, finished.json()["detail"]) == (409, "Турнир завершён")
+
+
 def test_a_knocked_out_player_re_enters_up_to_the_reentry_level_and_its_break(
     client: TestClient, club: Club, clock: FakeClock
 ) -> None:
@@ -477,6 +510,7 @@ GAME_ACTIONS = [
     ("POST", "next-level"),
     ("POST", "previous-level"),
     ("POST", "players/{player}/knock-out"),
+    ("POST", "players/{player}/undo-knock-out"),
     ("POST", "players/{player}/reentry"),
     ("POST", "players/{player}/addon"),
     ("POST", "players/{player}/seat"),

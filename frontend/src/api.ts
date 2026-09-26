@@ -301,8 +301,8 @@ export async function runGame(
   return accepted(await postJson(`${tournamentUrl(clubId, tournamentId)}/${action}`));
 }
 
-/** seat: a late player sits down. */
-export type PlayerAction = "knock-out" | "reentry" | "addon" | "seat";
+/** undo-knock-out: a mistaken knock-out taken back; seat: a late player sits down. */
+export type PlayerAction = "knock-out" | "undo-knock-out" | "reentry" | "addon" | "seat";
 
 export async function actOnPlayer(
   clubId: number,

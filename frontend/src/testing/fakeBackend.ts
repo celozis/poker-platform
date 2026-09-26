@@ -262,6 +262,11 @@ export function fakeBackend({
       }
       return answer();
     }
+    if (action === "undo-knock-out" && finished) {
+      game.out = game.out.filter((f) => f !== finished);
+      sitAt(finished.player, 1, { reentries: finished.reentries, addons: finished.addons });
+      return answer();
+    }
     if (action === "reentry" && finished) {
       game.out = game.out.filter((f) => f !== finished);
       sitAt(finished.player, 1, { reentries: finished.reentries + 1, addons: finished.addons });

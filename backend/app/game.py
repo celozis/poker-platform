@@ -307,6 +307,12 @@ def _require_in_game(registration: Registration) -> None:
         raise _refuse(f"Игрок {registration.player.name} не в игре")
 
 
+def _require_out(registration: Registration) -> None:
+    if registration.status != "out":
+        still = "ещё в игре" if registration.status == "in_game" else "не в игре"
+        raise _refuse(f"Игрок {registration.player.name} {still}")
+
+
 def _sit(registration: Registration, seat: Seat | None) -> None:
     registration.table_number = None if seat is None else seat.table
     registration.seat_number = None if seat is None else seat.seat
@@ -345,6 +351,23 @@ def knock_out(
     return _state(session, tournament, now)
 
 
+@router.post("/players/{player_id}/undo-knock-out")
+def undo_knock_out(
+    tournament_id: int, player_id: int, club: AdminClub, session: DbSession, now: Now, rng: Rng
+) -> GameState:
+    """Takes back a knock-out marked by mistake: the player returns to the table with the fewest
+    players, and it does not count as a re-entry. Only while the tournament is live; places in a
+    finished tournament are corrected with the results."""
+    tournament = _live_tournament(session, club, tournament_id)
+    registrations = _registrations(session, tournament)
+    registration = _registered(registrations, player_id)
+    _require_out(registration)
+    registration.finish_order = None
+    _sit(registration, seat_for_newcomer(_seating(registrations), tournament.seats_per_table, rng))
+    session.commit()
+    return _state(session, tournament, now)
+
+
 @router.post("/players/{player_id}/reentry")
 def reentry(
     tournament_id: int, player_id: int, club: AdminClub, session: DbSession, now: Now, rng: Rng
@@ -353,9 +376,7 @@ def reentry(
     tournament = _live_tournament(session, club, tournament_id)
     registrations = _registrations(session, tournament)
     registration = _registered(registrations, player_id)
-    if registration.status != "out":
-        still = "ещё в игре" if registration.status == "in_game" else "не в игре"
-        raise _refuse(f"Игрок {registration.player.name} {still}")
+    _require_out(registration)
     if tournament.reentry_until_level is None:
         raise _refuse("В этом турнире нет re-entry")
     if not current_windows(tournament, now).reentry:

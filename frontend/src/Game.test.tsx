@@ -146,6 +146,7 @@ describe("running a tournament", () => {
       expect.stringContaining("2 место"),
     ]);
     expect(within(results).getAllByRole("listitem")[0]).toHaveTextContent("Мария Иванова");
+    expect(within(results).queryByRole("button")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Пауза" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Начать турнир" })).not.toBeInTheDocument();
   });
@@ -178,8 +179,28 @@ describe("running a tournament", () => {
     await openGame(running({ out: [{ player: IVAN, place: 3, reentries: 0, addons: 0 }], in_game: [aSeat(MARIA, 1, 2), aSeat(PETR, 1, 3)] }));
 
     const out = await screen.findByRole("list", { name: "Выбывшие" });
-    expect(within(out).queryByRole("button")).not.toBeInTheDocument();
+    expect(within(out).queryByRole("button", { name: "Re-entry" })).not.toBeInTheDocument();
     expect(within(table("Стол 1")).queryByRole("button", { name: "Add-on" })).not.toBeInTheDocument();
+  });
+
+  it("undoes a knock-out marked by mistake", async () => {
+    const { user } = await openGame(
+      running({
+        in_game: [aSeat(MARIA, 1, 2), aSeat(PETR, 1, 3)],
+        out: [{ player: IVAN, place: 3, reentries: 0, addons: 0 }],
+      }),
+    );
+    const out = await screen.findByRole("list", { name: "Выбывшие" });
+
+    await user.click(
+      within(within(out).getByRole("listitem", { name: "Иван Петров" })).getByRole("button", {
+        name: "Отменить выбывание",
+      }),
+    );
+
+    const ivan = await within(table("Стол 1")).findByRole("listitem", { name: "Иван Петров" });
+    expect(ivan).not.toHaveTextContent("re-entry");
+    expect(screen.queryByRole("list", { name: "Выбывшие" })).not.toBeInTheDocument();
   });
 
   it("suggests a move to keep tables even and makes it", async () => {

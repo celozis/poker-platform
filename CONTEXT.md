@@ -70,7 +70,7 @@ _Avoid_: "In Progress" (say Running)
 
 **Buy-in**: The entry fee (registration cost). Paid either cash-on-entry or online through app.
 
-**Knock-out**: A player leaving the game for good (unless they re-enter). The admin marks it; it gives the player their Place.
+**Knock-out**: A player leaving the game for good (unless they re-enter). The admin marks it; it gives the player their Place. A knock-out marked by mistake can be undone while the tournament is live: the player sits down again, and it is not a re-entry.
 _Avoid_: Bust, elimination (in the admin panel)
 
 **Re-entry**: Player's option to buy back in after a knock-out, taking a new seat. Allowed up to and including a given level ("re-entry until level N"), or not offered at all; as many times as the window allows.

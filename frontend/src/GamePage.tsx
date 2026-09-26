@@ -170,7 +170,11 @@ export default function GamePage({
         </p>
       )}
       {game && game.out.length > 0 && (
-        <Finished game={game} onReenter={(playerId) => act(playerId, "reentry")} />
+        <Finished
+          game={game}
+          onReenter={(playerId) => act(playerId, "reentry")}
+          onUndo={(playerId) => act(playerId, "undo-knock-out")}
+        />
       )}
     </div>
   );
@@ -469,9 +473,12 @@ function Waiting({ game, onSeat }: { game: GameState; onSeat: (playerId: number)
 function Finished({
   game,
   onReenter,
+  onUndo,
 }: {
   game: GameState;
   onReenter: (playerId: number) => void;
+  /** Takes back a knock-out marked by mistake; not a re-entry. */
+  onUndo: (playerId: number) => void;
 }) {
   const finished = game.status === "finished";
   const title = finished ? "Итоги" : "Выбывшие";
@@ -490,14 +497,25 @@ function Finished({
               <p className="text-slate-900">{player.player.name}</p>
               {entries(player) && <p className="text-xs text-slate-500">{entries(player)}</p>}
             </div>
-            {!finished && game.windows.reentry && (
-              <button
-                type="button"
-                onClick={() => onReenter(player.player.id)}
-                className={smallButton}
-              >
-                Re-entry
-              </button>
+            {!finished && (
+              <div className="flex flex-wrap gap-2">
+                {game.windows.reentry && (
+                  <button
+                    type="button"
+                    onClick={() => onReenter(player.player.id)}
+                    className={smallButton}
+                  >
+                    Re-entry
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => onUndo(player.player.id)}
+                  className={smallButton}
+                >
+                  Отменить выбывание
+                </button>
+              </div>
             )}
           </li>
         ))}
