@@ -45,17 +45,25 @@ We're building a system to replace manual tournament management (spreadsheets, c
 
 ### Tournaments
 
-**Tournament**: A structured poker game event at a specific club on a specific date/time. Has: buy-in, starting stack, blind structure, rules (re-entry, add-on, late registration).
+**Tournament**: A structured poker game event at a specific club on a specific date/time. Has: name, start time, buy-in, starting stack, blind structure, rules (re-entry, add-on, late registration). Status is `scheduled` (the «Created» state of spec #1's state machine Created → In Progress → Paused → Finished) or `cancelled` (a final state outside that machine). Until a "start tournament" action exists, a tournament counts as **started** once its start time has passed. Upcoming tournaments start in the future, past ones have started. Only an upcoming, not cancelled tournament can be edited or cancelled; a cancelled one stays on the list, marked as cancelled.
 
-**Blind Level**: A row in the tournament's structure. Defines: small blind, big blind, ante, duration, which level it is.
+**Blind Structure**: The tournament's levels and breaks in play order. Stored as a whole with the tournament (ADR-0004).
+
+**Blind Level**: A row in the tournament's structure. Defines: small blind, big blind, ante, duration. Levels are numbered 1..N in play order; breaks are not numbered.
+
+**Break**: A pause between levels in the blind structure. Has only a duration.
+
+**Blind Structure Template**: A league-wide ready-made blind structure (e.g. "Стандартная лиги", "Турбо"). The admin picks one when creating a tournament and adjusts the copy. In the MVP templates live in backend code (ADR-0004).
 
 **Buy-in**: The entry fee (registration cost). Paid either cash-on-entry or online through app.
 
-**Re-entry**: Player's option to buy back in if they bust. Must happen during the re-entry window (first N levels, configurable).
+**Re-entry**: Player's option to buy back in if they bust. Allowed up to and including a given level ("re-entry until level N"), or not offered at all.
 
-**Add-on**: Player's option to buy extra chips at a fixed point in the tournament. Usually during the break before money (bubble).
+**Add-on**: Player's option to buy extra chips at a fixed point in the tournament: at a given level, or not offered at all.
 
-**Late Registration**: Window during which new players can join an already-running tournament. Typically until a certain blind level.
+**Late Registration**: Window during which new players can join an already-running tournament: up to and including a given level, or not offered at all.
+
+Rule levels always refer to blind level numbers (breaks not counted) and must exist in the tournament's structure.
 
 **Seating**: Assignment of players to tables and positions. Auto-computed by the system, balanced to keep tables even.
 

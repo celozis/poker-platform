@@ -1,10 +1,9 @@
 import { type FormEvent, useState } from "react";
 import { requestCode, verifyCode } from "./api";
+import { inputClass, SERVER_UNREACHABLE } from "./forms";
 import LeagueBrand from "./LeagueBrand";
 
-const inputClass = "rounded-lg border border-slate-300 px-3 py-2 text-base";
 const buttonClass = "rounded-lg bg-slate-900 px-4 py-2 font-medium text-white";
-const SERVER_UNREACHABLE = "Не удалось связаться с сервером. Попробуйте ещё раз.";
 
 export default function LoginPage({ onLoggedIn }: { onLoggedIn: () => void }) {
   const [phone, setPhone] = useState("");

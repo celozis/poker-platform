@@ -1,5 +1,6 @@
 import type { Me } from "./api";
 import LeagueBrand from "./LeagueBrand";
+import TournamentsPage from "./TournamentsPage";
 
 /** The club admin's workspace, dressed in the club's own logo and colours. */
 export default function AdminPanel({ me, onLogout }: { me: Me; onLogout: () => void }) {
@@ -33,12 +34,7 @@ export default function AdminPanel({ me, onLogout }: { me: Me; onLogout: () => v
         <div className="h-1" style={{ backgroundColor: club.accent_color }} />
       </header>
       <main className="mx-auto w-full max-w-5xl flex-1 px-4 py-8">
-        <div className="rounded-2xl bg-white p-6 shadow-sm">
-          <h2 className="mb-2 text-lg font-semibold text-slate-900">Админ-панель</h2>
-          <p className="text-slate-600">
-            Здесь появятся турниры, игроки и касса клуба.
-          </p>
-        </div>
+        <TournamentsPage club={club} />
         <LeagueBrand className="mt-8 justify-center text-slate-500" />
       </main>
     </>

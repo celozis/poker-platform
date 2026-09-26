@@ -13,5 +13,7 @@ export default defineConfig({
   test: {
     environment: "jsdom",
     setupFiles: ["./src/test-setup.ts"],
+    // Dates in tests are written for Novosibirsk time (UTC+7).
+    env: { TZ: "Asia/Novosibirsk" },
   },
 });

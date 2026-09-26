@@ -2,58 +2,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
-
-const ME = {
-  admin: { id: 1, name: "Анна Соколова", phone: "+79990000001" },
-  club: {
-    id: 7,
-    name: "Покер-клуб «Обь»",
-    logo_url: "/logos/ob.svg",
-    primary_color: "#0B3D91",
-    accent_color: "#F2A900",
-  },
-};
-const VALID_CODE = "123456";
-
-function json(body: unknown, status = 200) {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { "Content-Type": "application/json" },
-  });
-}
-
-// A stand-in for the backend auth API: remembers whether the browser is logged in.
-function fakeBackend({ loggedIn = false, down = [] as string[] } = {}) {
-  let session = loggedIn;
-  const fetch = vi.fn(async (url: string, init?: RequestInit) => {
-    const route = `${init?.method ?? "GET"} ${url}`;
-    if (down.includes(route)) {
-      throw new TypeError("Failed to fetch");
-    }
-    switch (route) {
-      case "GET /api/health":
-        return json({ api: "ok", database: "ok" });
-      case "GET /api/auth/me":
-        return session ? json(ME) : json({ detail: "Требуется вход" }, 401);
-      case "POST /api/auth/request-code":
-        return new Response(null, { status: 204 });
-      case "POST /api/auth/verify-code": {
-        const { code } = JSON.parse(String(init?.body));
-        if (code !== VALID_CODE) {
-          return json({ detail: "Неверный или просроченный код" }, 401);
-        }
-        session = true;
-        return new Response(null, { status: 204 });
-      }
-      case "POST /api/auth/logout":
-        session = false;
-        return new Response(null, { status: 204 });
-    }
-    return json({ detail: "Not Found" }, 404);
-  });
-  vi.stubGlobal("fetch", fetch);
-  return fetch;
-}
+import { fakeBackend, VALID_CODE } from "./testing/fakeBackend";
 
 afterEach(() => {
   vi.unstubAllGlobals();

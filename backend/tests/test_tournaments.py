@@ -1,0 +1,279 @@
+from datetime import timedelta
+
+import pytest
+from fastapi.testclient import TestClient
+
+from app.models import Club
+from tests.clock import FakeClock
+from tests.factories import create_admin, create_club
+from tests.login import log_in
+from tests.tournaments import a_break, a_level, a_tournament
+
+
+@pytest.fixture
+def club(client: TestClient, caplog: pytest.LogCaptureFixture, clock: FakeClock) -> Club:
+    """A club whose admin is logged in, with the clock fixed at 2026-09-26 12:00 UTC."""
+    club = create_club(name="Покер-клуб «Обь»")
+    create_admin(club, phone="+79130000001")
+    log_in(client, caplog, "+79130000001")
+    return club
+
+
+def test_admin_creates_a_tournament_from_a_league_template(client: TestClient, club: Club) -> None:
+    templates = client.get("/api/blind-templates").json()
+    structure = templates[0]["structure"]
+    structure[0]["big_blind"] = 250  # change a level
+    del structure[1]  # remove a level
+    structure.insert(2, a_break(15))  # add a break
+    structure.append(a_level(5000, 10000, ante=1000, minutes=15))  # add a level
+
+    created = client.post(
+        f"/api/clubs/{club.id}/tournaments",
+        json=a_tournament(name="Осенний кубок", structure=structure, addon_at_level=3),
+    )
+
+    assert created.status_code == 201
+    tournaments = client.get(f"/api/clubs/{club.id}/tournaments").json()
+    assert tournaments["past"] == []
+    [upcoming] = tournaments["upcoming"]
+    assert upcoming == created.json()
+    assert upcoming["name"] == "Осенний кубок"
+    assert upcoming["starts_at"] == "2026-10-03T12:00:00Z"
+    assert upcoming["buy_in"] == 2000
+    assert upcoming["starting_stack"] == 20000
+    assert upcoming["structure"] == structure
+    assert upcoming["reentry_until_level"] == 2
+    assert upcoming["addon_at_level"] == 3
+    assert upcoming["late_registration_until_level"] == 3
+    assert upcoming["status"] == "scheduled"
+
+
+def names(tournaments: list[dict[str, object]]) -> list[object]:
+    return [tournament["name"] for tournament in tournaments]
+
+
+def test_tournaments_move_from_upcoming_to_past_once_they_start(
+    client: TestClient, club: Club, clock: FakeClock
+) -> None:
+    for name, starts_at in [
+        ("Воскресный", "2026-09-27T12:00:00Z"),
+        ("Пятничный", "2026-10-02T12:00:00Z"),
+        ("Субботний", "2026-09-26T18:00:00Z"),
+    ]:
+        client.post(f"/api/clubs/{club.id}/tournaments", json=a_tournament(name=name, starts_at=starts_at))
+
+    before = client.get(f"/api/clubs/{club.id}/tournaments").json()
+    clock.advance(timedelta(days=2))
+    after = client.get(f"/api/clubs/{club.id}/tournaments").json()
+
+    assert names(before["upcoming"]) == ["Субботний", "Воскресный", "Пятничный"]
+    assert names(before["past"]) == []
+    assert names(after["upcoming"]) == ["Пятничный"]
+    assert names(after["past"]) == ["Воскресный", "Субботний"]  # most recent first
+
+
+def test_admin_edits_a_tournament_before_it_starts(client: TestClient, club: Club) -> None:
+    created = client.post(f"/api/clubs/{club.id}/tournaments", json=a_tournament()).json()
+    changes = a_tournament(
+        name="Пятничный турбо",
+        buy_in=1500,
+        structure=[a_level(100, 200, minutes=10), a_level(200, 400, minutes=10)],
+        reentry_until_level=None,
+        addon_at_level=None,
+        late_registration_until_level=1,
+    )
+
+    edited = client.put(f"/api/clubs/{club.id}/tournaments/{created['id']}", json=changes)
+
+    assert edited.status_code == 200
+    [upcoming] = client.get(f"/api/clubs/{club.id}/tournaments").json()["upcoming"]
+    assert upcoming == edited.json()
+    assert upcoming["id"] == created["id"]
+    assert upcoming["name"] == "Пятничный турбо"
+    assert upcoming["buy_in"] == 1500
+    assert upcoming["structure"] == changes["structure"]
+    assert upcoming["reentry_until_level"] is None
+    assert upcoming["addon_at_level"] is None
+    assert upcoming["late_registration_until_level"] == 1
+
+
+def test_admin_cancels_a_tournament_before_it_starts(client: TestClient, club: Club) -> None:
+    created = client.post(f"/api/clubs/{club.id}/tournaments", json=a_tournament()).json()
+    cancel_url = f"/api/clubs/{club.id}/tournaments/{created['id']}/cancel"
+
+    cancelled = client.post(cancel_url)
+    cancelled_again = client.post(cancel_url)
+
+    assert cancelled.status_code == 200
+    assert cancelled.json()["status"] == "cancelled"
+    assert cancelled_again.status_code == 200
+    # A cancelled tournament stays on the list, marked as cancelled.
+    [upcoming] = client.get(f"/api/clubs/{club.id}/tournaments").json()["upcoming"]
+    assert upcoming["id"] == created["id"]
+    assert upcoming["status"] == "cancelled"
+
+
+def test_a_started_tournament_can_no_longer_be_edited_or_cancelled(
+    client: TestClient, club: Club, clock: FakeClock
+) -> None:
+    created = client.post(
+        f"/api/clubs/{club.id}/tournaments", json=a_tournament(starts_at="2026-09-26T19:00:00Z")
+    ).json()
+    url = f"/api/clubs/{club.id}/tournaments/{created['id']}"
+
+    clock.advance(timedelta(hours=7))
+    edited = client.put(url, json=a_tournament(name="Другое название"))
+    cancelled = client.post(f"{url}/cancel")
+
+    assert edited.status_code == 409
+    assert edited.json()["detail"] == "Турнир уже начался, его нельзя изменить"
+    assert cancelled.status_code == 409
+    assert cancelled.json()["detail"] == "Турнир уже начался, его нельзя отменить"
+    [past] = client.get(f"/api/clubs/{club.id}/tournaments").json()["past"]
+    assert past == created
+
+
+def test_a_cancelled_tournament_can_no_longer_be_edited(client: TestClient, club: Club) -> None:
+    created = client.post(f"/api/clubs/{club.id}/tournaments", json=a_tournament()).json()
+    url = f"/api/clubs/{club.id}/tournaments/{created['id']}"
+    client.post(f"{url}/cancel")
+
+    edited = client.put(url, json=a_tournament(name="Другое название"))
+
+    assert edited.status_code == 409
+    assert edited.json()["detail"] == "Турнир отменён, его нельзя изменить"
+
+
+@pytest.fixture
+def other_club_tournament(client: TestClient, caplog: pytest.LogCaptureFixture, club: Club) -> str:
+    """URL of a tournament of «Енисей»; afterwards the admin of «Обь» (`club`) is logged in."""
+    other_club = create_club(name="Покер-клуб «Енисей»")
+    create_admin(other_club, phone="+79130000002")
+    client.post("/api/auth/logout")
+    log_in(client, caplog, "+79130000002")
+    created = client.post(
+        f"/api/clubs/{other_club.id}/tournaments", json=a_tournament(name="Турнир Енисея")
+    ).json()
+    client.post("/api/auth/logout")
+    log_in(client, caplog, "+79130000001")
+    return f"/api/clubs/{other_club.id}/tournaments/{created['id']}"
+
+
+def test_admin_does_not_see_another_clubs_tournaments(
+    client: TestClient, club: Club, other_club_tournament: str
+) -> None:
+    other_club_list = other_club_tournament.rsplit("/", 1)[0]
+
+    own = client.get(f"/api/clubs/{club.id}/tournaments")
+    other = client.get(other_club_list)
+
+    assert own.json() == {"upcoming": [], "past": []}
+    assert other.status_code == 403
+    assert "Енисея" not in other.text
+
+
+def test_admin_cannot_create_tournaments_in_another_club(
+    client: TestClient, club: Club, other_club_tournament: str
+) -> None:
+    other_club_list = other_club_tournament.rsplit("/", 1)[0]
+
+    response = client.post(other_club_list, json=a_tournament())
+
+    assert response.status_code == 403
+
+
+def test_admin_cannot_edit_or_cancel_another_clubs_tournament(
+    client: TestClient, club: Club, other_club_tournament: str
+) -> None:
+    tournament_id = other_club_tournament.rsplit("/", 1)[1]
+    via_own_club = f"/api/clubs/{club.id}/tournaments/{tournament_id}"
+
+    assert client.put(other_club_tournament, json=a_tournament()).status_code == 403
+    assert client.post(f"{other_club_tournament}/cancel").status_code == 403
+    # Nor by putting the other club's tournament id under their own club.
+    assert client.put(via_own_club, json=a_tournament()).status_code == 404
+    assert client.post(f"{via_own_club}/cancel").status_code == 404
+
+
+def test_tournaments_require_login(client: TestClient) -> None:
+    club = create_club()
+
+    assert client.get(f"/api/clubs/{club.id}/tournaments").status_code == 401
+    assert client.post(f"/api/clubs/{club.id}/tournaments", json=a_tournament()).status_code == 401
+    assert client.get("/api/blind-templates").status_code == 401
+
+
+def test_invalid_tournament_is_rejected_with_a_clear_error(client: TestClient, club: Club) -> None:
+    response = client.post(f"/api/clubs/{club.id}/tournaments", json=a_tournament(addon_at_level=12))
+
+    assert response.status_code == 422
+    assert response.json() == {
+        "detail": ["Add-on: уровня 12 нет в структуре, в ней уровни с 1 по 3"]
+    }
+    assert client.get(f"/api/clubs/{club.id}/tournaments").json()["upcoming"] == []
+
+
+def test_invalid_changes_are_rejected_and_the_tournament_stays_as_it_was(
+    client: TestClient, club: Club
+) -> None:
+    created = client.post(f"/api/clubs/{club.id}/tournaments", json=a_tournament()).json()
+
+    response = client.put(
+        f"/api/clubs/{club.id}/tournaments/{created['id']}",
+        json=a_tournament(name="Новое название", starting_stack=0),
+    )
+
+    assert response.status_code == 422
+    assert response.json() == {"detail": ["Стартовый стек должен быть больше нуля"]}
+    assert client.get(f"/api/clubs/{club.id}/tournaments").json()["upcoming"] == [created]
+
+
+def test_malformed_fields_are_rejected_with_messages_in_russian(
+    client: TestClient, club: Club
+) -> None:
+    payload = a_tournament(buy_in="две тысячи", starts_at="завтра")
+    del payload["name"]
+    payload["structure"][1]["big_blind"] = 1.5
+    payload["structure"][2] = {"kind": "обед", "duration_minutes": 30}
+
+    response = client.post(f"/api/clubs/{club.id}/tournaments", json=payload)
+
+    assert response.status_code == 422
+    assert response.json() == {
+        "detail": [
+            "Название: не заполнено",
+            "Начало: нужны дата и время",
+            "Бай-ин: нужно целое число",
+            "Структура блайндов, строка 2, большой блайнд: нужно целое число",
+            "Структура блайндов, строка 3: нужен уровень или перерыв",
+        ]
+    }
+
+
+def test_every_league_template_makes_a_valid_tournament(client: TestClient, club: Club) -> None:
+    templates = client.get("/api/blind-templates").json()
+
+    assert len(templates) >= 1
+    for template in templates:
+        assert template["name"]
+        levels = [item for item in template["structure"] if item["kind"] == "level"]
+        assert set(levels[0]) == {"kind", "small_blind", "big_blind", "ante", "duration_minutes"}
+        created = client.post(
+            f"/api/clubs/{club.id}/tournaments",
+            json=a_tournament(
+                structure=template["structure"],
+                reentry_until_level=len(levels),
+                addon_at_level=len(levels),
+                late_registration_until_level=len(levels),
+            ),
+        )
+        assert created.status_code == 201, created.json()
+
+
+def test_a_malformed_tournament_address_is_explained_in_russian(
+    client: TestClient, club: Club
+) -> None:
+    response = client.put(f"/api/clubs/{club.id}/tournaments/пятничный", json=a_tournament())
+
+    assert response.status_code == 422
+    assert response.json() == {"detail": ["Номер турнира: нужно целое число"]}

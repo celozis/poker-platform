@@ -31,6 +31,7 @@ def migrated_database() -> None:
 
     config = Config(str(BACKEND_DIR / "alembic.ini"))
     config.set_main_option("script_location", str(BACKEND_DIR / "migrations"))
+    config.attributes["configure_logger"] = False
     command.downgrade(config, "base")
     command.upgrade(config, "head")
 
