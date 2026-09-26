@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <circle cx="32" cy="32" r="31" fill="#7A1F2B"/>
+  <path d="M12 46 26 22l7 12 5-8 14 20z" fill="#E8C07D"/>
+  <path d="M26 22l-4 7h8z M38 26l-3 5h6z" fill="#FFFFFF"/>
+  <text x="32" y="17" text-anchor="middle" font-family="Georgia, serif" font-size="9" font-weight="bold" fill="#FFFFFF">ЕНИСЕЙ</text>
+</svg>

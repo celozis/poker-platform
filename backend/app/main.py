@@ -1,3 +1,4 @@
+import logging
 from typing import Annotated, Literal
 
 from fastapi import Depends, FastAPI
@@ -6,9 +7,21 @@ from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
+from app import auth, clubs
 from app.db import get_session
 
+# Uvicorn only configures its own loggers; without this, INFO messages from the app
+# (such as the prototype's login codes) would never reach the backend log.
+_app_logger = logging.getLogger("app")
+_app_logger.setLevel(logging.INFO)
+if not _app_logger.handlers:
+    _handler = logging.StreamHandler()
+    _handler.setFormatter(logging.Formatter("%(levelname)s:     %(name)s - %(message)s"))
+    _app_logger.addHandler(_handler)
+
 app = FastAPI(title="Poker Platform API")
+app.include_router(auth.router)
+app.include_router(clubs.router)
 
 
 class Health(BaseModel):

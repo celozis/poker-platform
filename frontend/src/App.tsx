@@ -1,45 +1,39 @@
 import { useEffect, useState } from "react";
+import AdminPanel from "./AdminPanel";
+import { fetchMe, logout, type Me } from "./api";
+import LoginPage from "./LoginPage";
+import SystemStatus from "./SystemStatus";
 
-// Mirrors the Health response model of GET /api/health in backend/app/main.py.
-type Health = { api: "ok"; database: "ok" | "unavailable" };
-
-type HealthState =
+type SessionState =
   | { status: "loading" }
-  | { status: "loaded"; health: Health }
-  | { status: "unreachable" };
-
-async function fetchHealth(): Promise<Health> {
-  const response = await fetch("/api/health");
-  if (!response.ok) {
-    throw new Error(`Health check failed with status ${response.status}`);
-  }
-  return response.json();
-}
+  | { status: "anonymous" }
+  | { status: "loggedIn"; me: Me };
 
 export default function App() {
-  const [state, setState] = useState<HealthState>({ status: "loading" });
+  const [session, setSession] = useState<SessionState>({ status: "loading" });
 
-  useEffect(() => {
-    fetchHealth()
-      .then((health) => setState({ status: "loaded", health }))
-      .catch(() => setState({ status: "unreachable" }));
-  }, []);
+  function loadSession() {
+    fetchMe()
+      .then((me) => setSession(me ? { status: "loggedIn", me } : { status: "anonymous" }))
+      .catch(() => setSession({ status: "anonymous" }));
+  }
+
+  useEffect(loadSession, []);
+
+  function handleLogout() {
+    // Only leave the panel once the server has dropped the session; otherwise it is still live.
+    logout()
+      .then(() => setSession({ status: "anonymous" }))
+      .catch(() => window.alert("Не удалось выйти: нет связи с сервером. Попробуйте ещё раз."));
+  }
 
   return (
-    <main>
-      <h1>Сибирская лига покера</h1>
-      {state.status === "loading" && <p>Проверяем систему…</p>}
-      {state.status === "unreachable" && <p>API недоступен</p>}
-      {state.status === "loaded" && (
-        <ul>
-          {state.health.api === "ok" && <li>API работает</li>}
-          <li>
-            {state.health.database === "ok"
-              ? "База данных доступна"
-              : "База данных недоступна"}
-          </li>
-        </ul>
-      )}
-    </main>
+    <div className="flex min-h-screen flex-col bg-slate-100">
+      {session.status === "anonymous" && <LoginPage onLoggedIn={loadSession} />}
+      {session.status === "loggedIn" && <AdminPanel me={session.me} onLogout={handleLogout} />}
+      <footer className="p-4">
+        <SystemStatus />
+      </footer>
+    </div>
   );
 }

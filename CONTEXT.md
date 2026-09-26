@@ -31,6 +31,10 @@ We're building a system to replace manual tournament management (spreadsheets, c
 
 **Network**: The set of all clubs in the league.
 
+**Club Branding**: A club's logo and two colours (primary, accent). The Admin Panel is dressed in the admin's club branding; the league mark is always shown next to it.
+
+**Tenant**: A club, as the unit of data isolation. Club-owned rows carry `club_id`; an admin reaches only their own club's data (ADR-0003).
+
 ### Players & Identity
 
 **Player**: A person who plays tournaments. Has a profile (phone, name, Telegram/VK ID), status (Guest → Regular → VIP, per ЮДС loyalty system), and rating.
@@ -81,7 +85,11 @@ We're building a system to replace manual tournament management (spreadsheets, c
 
 ### Roles & Permissions
 
-**Admin (Администратор)**: Runs tournaments: register players, manage seating, track results, handle disputes.
+**Admin (Администратор)**: Runs tournaments: register players, manage seating, track results, handle disputes. Belongs to exactly one club.
+
+**Login Code**: A six-digit one-time code for passwordless login by phone number. Valid for 5 minutes, burns after 5 wrong tries, and a new one is sent at most once a minute. In the prototype it is written to the backend log instead of being sent by SMS.
+
+**Admin Session**: What a successful login creates: an HttpOnly cookie holding a random token, stored hashed on the server for 7 days. Logout deletes it on the server.
 
 **Floor Manager (Флор-менеджер)**: Oversees the game floor: resolves disputes, calls dealer rotations, enforces rules.
 
@@ -116,7 +124,7 @@ We're building a system to replace manual tournament management (spreadsheets, c
 - **Backend API** (FastAPI, Python): Manages tournaments, players, ratings, cash. Exposes REST + WebSocket.
 - **Telegram Bot** (aiogram, Python): Primary player entry point.
 - **Web Frontend** (React, TS): Admin Panel, Player Cabinet, Dealer Cabinet, Tabletop.
-- **Database** (PostgreSQL): Multi-tenant (per-club) schema or row-level security. Accessed via SQLAlchemy 2 with sync sessions (ADR-0002); Alembic migrations run automatically on backend start.
+- **Database** (PostgreSQL): Multi-tenant via shared tables with a `club_id` column; access is enforced by the `AdminClub` dependency on every `/api/clubs/{club_id}/...` route (ADR-0003). Accessed via SQLAlchemy 2 with sync sessions (ADR-0002); Alembic migrations run automatically on backend start.
 - **Integrations**: iiko (cashier), ЮДС (loyalty), Telegram API, VK ID (auth).
 
 **MVP (Phase 1):**
@@ -160,9 +168,28 @@ Requires Docker (Docker Desktop on Windows/macOS). Repo layout: `backend/` (Fast
 docker compose up --build
 ```
 
-- Frontend: http://localhost:5173 (the home page shows API and database status)
+- Frontend: http://localhost:5173 (admin login; API and database status in the footer)
 - Backend API: http://localhost:8000 (health check: `/api/health`, docs: `/docs`)
 - PostgreSQL: `localhost:5433`, user/password `poker`/`poker`, databases `poker` (dev) and `poker_test` (tests). Host port 5433 avoids clashing with a locally installed PostgreSQL.
+
+### Test clubs and admin login
+
+```bash
+# With the stack running (`docker compose up`, which applies migrations first),
+# create (or refresh) the two test clubs and their admins; safe to run again
+docker compose exec backend python -m app.seed
+```
+
+| Club | Admin | Phone |
+|---|---|---|
+| Покер-клуб «Обь» | Анна Соколова | +7 999 000-00-01 |
+| Покер-клуб «Енисей» | Дмитрий Орлов | +7 999 000-00-02 |
+
+To log in, enter the phone on http://localhost:5173 and read the code from the backend log (no SMS is sent in the prototype):
+
+```bash
+docker compose logs backend | grep "Код входа"
+```
 
 ### Running tests
 
@@ -210,5 +237,5 @@ The Telegram bot (aiogram) is not part of the skeleton yet.
 
 ---
 
-**Last updated**: 2026-09-25  
+**Last updated**: 2026-09-26  
 **Owner**: Matt Getsov
