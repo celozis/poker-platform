@@ -36,6 +36,9 @@ export type TournamentInput = {
   addon_at_level: number | null;
   /** Chips an add-on gives; needed only when the add-on is offered. */
   addon_stack: number | null;
+  /** What an add-on costs, in roubles; needed only when the add-on is offered. A re-entry costs
+   * the buy-in. */
+  addon_price: number | null;
   late_registration_until_level: number | null;
   seats_per_table: number;
 };
@@ -226,24 +229,48 @@ export async function registerPlayer(
   return accepted(await postJson(url, { player_id: playerId }));
 }
 
+/** `refunded`: roubles given back by a storno of the buy-in the player paid; 0 when none. */
+export type Refund = { refunded: number };
+
+/** Takes the player off the tournament before the start, giving back a buy-in they paid. */
 export async function cancelRegistration(
   clubId: number,
   tournamentId: number,
   playerId: number,
-): Promise<void> {
+): Promise<Refund> {
   const url = `${registrationsUrl(clubId, tournamentId)}/${playerId}`;
-  await throwIfRejected(await sendJson("DELETE", url));
+  return accepted(await sendJson("DELETE", url));
 }
 
-/** Marks the player as arrived (`arrived`), or takes a mistaken check-in back. */
-export async function setCheckedIn(
+/** How a player pays: every payment is a transaction in the tournament's cashier. */
+export type PaymentMethod = "cash" | "card";
+
+/** What a paid action sends: nothing when there is nothing to pay. */
+function payment(method: PaymentMethod | null): { payment_method: PaymentMethod } | undefined {
+  return method === null ? undefined : { payment_method: method };
+}
+
+function checkInUrl(clubId: number, tournamentId: number, playerId: number): string {
+  return `${registrationsUrl(clubId, tournamentId)}/${playerId}/check-in`;
+}
+
+/** Marks the player as arrived; they pay the buy-in (`method`, null when the tournament is free). */
+export async function checkIn(
   clubId: number,
   tournamentId: number,
   playerId: number,
-  arrived: boolean,
+  method: PaymentMethod | null,
 ): Promise<Registration> {
-  const url = `${registrationsUrl(clubId, tournamentId)}/${playerId}/check-in`;
-  return accepted(await sendJson(arrived ? "POST" : "DELETE", url));
+  return accepted(await sendJson("POST", checkInUrl(clubId, tournamentId, playerId), payment(method)));
+}
+
+/** Takes a mistaken check-in back, and the buy-in with it. */
+export async function undoCheckIn(
+  clubId: number,
+  tournamentId: number,
+  playerId: number,
+): Promise<Registration & Refund> {
+  return accepted(await sendJson("DELETE", checkInUrl(clubId, tournamentId, playerId)));
 }
 
 export type Clock = {
@@ -319,14 +346,16 @@ export async function runGame(
 /** undo-knock-out: a mistaken knock-out taken back; seat: a late player sits down. */
 export type PlayerAction = "knock-out" | "undo-knock-out" | "reentry" | "addon" | "seat";
 
+/** A re-entry, an add-on and a late seat are paid for (`method`, null when free). */
 export async function actOnPlayer(
   clubId: number,
   tournamentId: number,
   playerId: number,
   action: PlayerAction,
+  method: PaymentMethod | null = null,
 ): Promise<GameState> {
   const url = `${tournamentUrl(clubId, tournamentId)}/players/${playerId}/${action}`;
-  return accepted(await postJson(url));
+  return accepted(await postJson(url, payment(method)));
 }
 
 export async function movePlayer(
@@ -421,4 +450,73 @@ export async function fetchRating(clubId: number, season?: string): Promise<Club
   const response = await fetch(`/api/clubs/${clubId}/rating${query}`);
   if (!response.ok) throw failed(response);
   return response.json();
+}
+
+export type TransactionKind = "buy_in" | "reentry" | "addon";
+
+/** A payment of a tournament. `amount` in roubles, negative for a storno; `reverses_id`: the
+ * operation a storno reverses; `replaces_id`: the payment taken the wrong way that this one
+ * replaces; `reversed_by_id`: the storno that has reversed this one. */
+export type Transaction = {
+  id: number;
+  created_at: string;
+  kind: TransactionKind;
+  amount: number;
+  payment_method: PaymentMethod;
+  player: Player;
+  /** Who took the money, or reversed it. */
+  admin: Admin;
+  reverses_id: number | null;
+  replaces_id: number | null;
+  reversed_by_id: number | null;
+};
+
+/** `count`: operations that stand, neither a storno nor reversed. */
+export type KindTotal = { kind: TransactionKind; count: number; amount: number };
+
+export type MethodTotal = { payment_method: PaymentMethod; amount: number };
+
+/** A tournament's cashier: always all three kinds and both methods; operations in the order
+ * they were made. */
+export type Cashier = {
+  by_kind: KindTotal[];
+  by_method: MethodTotal[];
+  total: number;
+  transactions: Transaction[];
+};
+
+function cashierUrl(clubId: number, tournamentId: number): string {
+  return `${tournamentUrl(clubId, tournamentId)}/cashier`;
+}
+
+export async function fetchCashier(clubId: number, tournamentId: number): Promise<Cashier> {
+  const response = await fetch(cashierUrl(clubId, tournamentId));
+  if (!response.ok) throw failed(response);
+  return response.json();
+}
+
+/** Where the browser downloads the cashier as a CSV file for Excel. */
+export function cashierCsvUrl(clubId: number, tournamentId: number): string {
+  return `${cashierUrl(clubId, tournamentId)}.csv`;
+}
+
+/** Reverses a mistaken operation by a storno; the operation stays in the history. */
+export async function reverseTransaction(
+  clubId: number,
+  tournamentId: number,
+  transactionId: number,
+): Promise<Cashier> {
+  const url = `${cashierUrl(clubId, tournamentId)}/transactions/${transactionId}/reverse`;
+  return accepted(await postJson(url));
+}
+
+/** Puts right a payment taken the wrong way: a storno, and the same payment taken `method`. */
+export async function changePaymentMethod(
+  clubId: number,
+  tournamentId: number,
+  transactionId: number,
+  method: PaymentMethod,
+): Promise<Cashier> {
+  const url = `${cashierUrl(clubId, tournamentId)}/transactions/${transactionId}/payment-method`;
+  return accepted(await postJson(url, { payment_method: method }));
 }

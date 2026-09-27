@@ -29,5 +29,6 @@ def a_tournament(**overrides: Any) -> dict[str, Any]:
         "reentry_until_level": 2,
         "addon_at_level": 2,
         "addon_stack": 30000,
+        "addon_price": 1000,
         "late_registration_until_level": 3,
     } | overrides

@@ -47,7 +47,7 @@ We're building a system to replace manual tournament management (spreadsheets, c
 
 **Registration**: A club player signed up for a tournament, at most once per tournament. States: Registered → Checked In → In Game (seated) → Out (finished with a place). Players sign up until the tournament is started, however late that is, and afterwards only during Late Registration; they drop out only before the start.
 
-**Check-in**: Marking on the day that a registered player has come to the club. Open from 12 hours before the tournament's start time to 12 hours after it, and closed once the tournament is started: a player who comes later is seated through Late Registration, which checks them in. A mistaken check-in can be taken back while check-in is open. Clubs have no time zone yet, which is why this is a window around the start rather than a calendar day.
+**Check-in**: Marking on the day that a registered player has come to the club; the player pays the buy-in then. Open from 12 hours before the tournament's start time to 12 hours after it, and closed once the tournament is started: a player who comes later is seated through Late Registration, which checks them in. A mistaken check-in can be taken back while check-in is open, which gives the buy-in back by a storno. Clubs have no time zone yet, which is why this is a window around the start rather than a calendar day.
 
 ### Tournaments
 
@@ -68,14 +68,14 @@ _Avoid_: "In Progress" (say Running)
 
 **Blind Structure Template**: A league-wide ready-made blind structure (e.g. "Стандартная лиги", "Турбо"). The admin picks one when creating a tournament and adjusts the copy. In the MVP templates live in backend code (ADR-0004).
 
-**Buy-in**: The entry fee (registration cost). Paid either cash-on-entry or online through app.
+**Buy-in**: The entry fee: rent of the table and the dealer's work, not a stake. Paid in cash or by card when the player comes (check-in), or when a latecomer sits down through Late Registration; a player who drops out before the start, or whose tournament is cancelled, gets it back by a storno. Signing up (also from the bot) costs nothing. Online payment is Phase 2+.
 
 **Knock-out**: A player leaving the game for good (unless they re-enter). The admin marks it; it gives the player their Place. A knock-out marked by mistake can be undone while the tournament is live: the player sits down again, and it is not a re-entry.
 _Avoid_: Bust, elimination (in the admin panel)
 
-**Re-entry**: Player's option to buy back in after a knock-out, taking a new seat and a new starting stack. Allowed up to and including a given level ("re-entry until level N"), or not offered at all; as many times as the window allows.
+**Re-entry**: Player's option to buy back in after a knock-out, taking a new seat and a new starting stack. Allowed up to and including a given level ("re-entry until level N"), or not offered at all; as many times as the window allows. Costs the buy-in.
 
-**Add-on**: Player's option to buy extra chips at a fixed point in the tournament: at a given level, or not offered at all. Gives as many chips as the tournament says (its add-on stack). One per entry: a player who re-entered can take it again.
+**Add-on**: Player's option to buy extra chips at a fixed point in the tournament: at a given level, or not offered at all. Gives as many chips as the tournament says (its add-on stack) and costs its add-on price. One per entry: a player who re-entered can take it again.
 
 **Average Stack**: All the chips in play shared among the players still at the tables: a starting stack for every entry (the first one and each re-entry) and the add-on stack for every add-on. A knocked-out player's chips stay in play.
 
@@ -111,9 +111,16 @@ _Avoid_: Edit result, override
 
 ### Cashier & Financial
 
-**Cashier (Касса)**: The financial ledger of a tournament and club. Records: buy-ins, re-entries, add-ons, payouts, rake (if any).
+**Cashier (Касса)**: The financial ledger of a tournament: its transactions and their summary by kind of operation (buy-in, re-entry, add-on), by payment method, and in all. Exported to CSV for Excel. Money only comes in: sport poker has no prizes to pay out. Worked out from the transactions on every request (ADR-0009).
 
-**Transaction**: A single cash movement (entry, re-entry, add-on, bar charge, payout). Recorded in real-time during tournament.
+**Transaction**: A single payment of a tournament: a buy-in, a re-entry or an add-on, at the price the tournament's rules set, paid in cash or by card and taken by a named admin. Recorded by the action itself (check-in, late seat, re-entry, add-on), never typed in by hand. Only ever added, never changed or deleted. A free operation (price 0) makes none.
+_Avoid_: Payment record, entry (for the money)
+
+**Payment Method**: Cash (наличные) or card (карта). Every transaction has one.
+
+**Storno (сторно)**: A transaction of the opposite amount that reverses a mistaken one; the original stays in the history, marked reversed. A transaction is reversed at most once, and a storno is never reversed. Reversing money does not change the game: a mistaken knock-out is undone in the game.
+
+**Payment Method Change**: Putting right a payment taken the wrong way: a storno of it and the same payment taken again the other way, in one go.
 
 **iiko Integration**: The club's POS/cashier system (iiko is the target, but generalize). We sync tournament cash data to iiko and read back player balances.
 
@@ -166,6 +173,7 @@ _Avoid_: Tabletop
 - **Database** (PostgreSQL): Multi-tenant via shared tables with a `club_id` column; access is enforced by the `AdminClub` dependency on every `/api/clubs/{club_id}/...` route (ADR-0003). Accessed via SQLAlchemy 2 with sync sessions (ADR-0002); Alembic migrations run automatically on backend start.
 - **Players**: League-wide `players` (one per phone), each club's list in `club_players`, and `registrations` of a club's players for its tournaments (ADR-0005).
 - **Running a tournament**: the game lives in the tournament row (status, blind clock) and in its registrations (seat, finish order, re-entries, add-ons); the blind clock is worked out from the time, with no background job (ADR-0006).
+- **Cashier**: every paid action writes a row to `transactions` (`app/transactions.py`); a storno is another row pointing at the one it reverses. The cashier's summary and the CSV are worked out from the rows on every request (`app/cashier.py`, ADR-0009).
 - **Results and rating**: the last knock-out fixes every player's place and points in their registration; a place correction rewrites them. The club rating adds the points up per season on every request, with no table of its own (ADR-0008).
 - **Realtime**: after committing a change, the backend tells the tournament's watchers "it has changed" (`app/realtime.py`, in-process); each connected hall board reads the board afresh and gets it over its WebSocket. One backend process only for now (ADR-0007).
 - **Integrations**: iiko (cashier), ЮДС (loyalty), Telegram API, VK ID (auth).

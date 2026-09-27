@@ -29,8 +29,15 @@ def test_an_addon_says_how_many_chips_it_gives() -> None:
     assert errors(addon_stack=3_000_000_000) == ["Фишек за add-on слишком много"]
 
 
-def test_an_addon_that_is_not_offered_needs_no_chips() -> None:
-    assert errors(addon_at_level=None, addon_stack=None) == []
+def test_an_addon_says_what_it_costs() -> None:
+    assert errors(addon_price=None) == ["Add-on: укажите его стоимость"]
+    assert errors(addon_price=-1) == ["Стоимость add-on не может быть отрицательной"]
+    assert errors(addon_price=3_000_000_000) == ["Стоимость add-on слишком большая"]
+    assert errors(addon_price=0) == []
+
+
+def test_an_addon_that_is_not_offered_needs_no_chips_and_no_price() -> None:
+    assert errors(addon_at_level=None, addon_stack=None, addon_price=None) == []
 
 
 def test_reentry_and_late_registration_levels_must_be_within_the_structure() -> None:

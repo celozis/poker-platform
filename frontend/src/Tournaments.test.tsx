@@ -45,24 +45,30 @@ describe("club tournaments", () => {
     const live = await screen.findByRole("region", { name: "Идут сейчас" });
     const saturday = within(live).getByRole("listitem", { name: "Субботний турнир" });
     expect(saturday).toHaveTextContent("Идёт");
-    expect(buttonNames(saturday)).toEqual(["Регистрации", "Проведение"]);
+    expect(buttonNames(saturday)).toEqual(["Регистрации", "Проведение", "Касса"]);
 
     const upcoming = screen.getByRole("region", { name: "Предстоящие" });
     const friday = within(upcoming).getByRole("listitem", { name: "Пятничный турнир" });
     expect(friday).toHaveTextContent("2 октября");
     expect(friday).toHaveTextContent("19:00");
     expect(friday).toHaveTextContent("2 000 ₽");
-    expect(buttonNames(friday)).toEqual(["Регистрации", "Проведение", "Изменить", "Отменить турнир"]);
+    expect(buttonNames(friday)).toEqual([
+      "Регистрации",
+      "Проведение",
+      "Касса",
+      "Изменить",
+      "Отменить турнир",
+    ]);
     const cancelled = within(upcoming).getByRole("listitem", { name: "Отменённый турнир" });
     expect(cancelled).toHaveTextContent("Отменён");
-    expect(buttonNames(cancelled)).toEqual(["Регистрации"]);  // no running, editing or cancelling
+    expect(buttonNames(cancelled)).toEqual(["Регистрации", "Касса"]);  // no running, editing or cancelling
 
     const past = screen.getByRole("region", { name: "Прошедшие" });
     const summer = within(past).getByRole("listitem", { name: "Летний кубок" });
     expect(summer).toHaveTextContent("1 августа");
     expect(summer).toHaveTextContent("Завершён");
     // Results only once finished; no editing or cancelling.
-    expect(buttonNames(summer)).toEqual(["Регистрации", "Проведение", "Результаты"]);
+    expect(buttonNames(summer)).toEqual(["Регистрации", "Проведение", "Касса", "Результаты"]);
   });
 
   it("shows no live section while nothing is running", async () => {
@@ -94,6 +100,7 @@ describe("club tournaments", () => {
     await user.type(screen.getByLabelText("Re-entry до уровня"), "2");
     await user.type(screen.getByLabelText("Add-on на уровне"), "2");
     await user.type(screen.getByLabelText("Фишек за add-on"), "30000");
+    await user.type(screen.getByLabelText("Стоимость add-on, ₽"), "1000");
     const seats = screen.getByLabelText("Мест за столом");
     expect(seats).toHaveValue(9);
     await user.clear(seats);
@@ -117,6 +124,7 @@ describe("club tournaments", () => {
       reentry_until_level: 2,
       addon_at_level: 2,
       addon_stack: 30000,
+      addon_price: 1000,
       late_registration_until_level: null,
       seats_per_table: 8,
     });
@@ -168,6 +176,7 @@ describe("club tournaments", () => {
     expect(screen.getByLabelText("Уровень 3: анте")).toHaveValue(75);
     expect(screen.getByLabelText("Поздняя регистрация до уровня")).toHaveValue(3);
     expect(screen.getByLabelText("Фишек за add-on")).toHaveValue(30000);
+    expect(screen.getByLabelText("Стоимость add-on, ₽")).toHaveValue(1000);
     const buyIn = screen.getByLabelText("Бай-ин, ₽");
     await user.clear(buyIn);
     await user.type(buyIn, "1500");
@@ -202,8 +211,11 @@ describe("club tournaments", () => {
     await user.click(within(row).getByRole("button", { name: "Отменить турнир" }));
 
     expect(confirm).toHaveBeenCalledWith(expect.stringContaining("«Пятничный турнир»"));
+    expect(confirm).toHaveBeenCalledWith(
+      expect.stringContaining("Бай-ины пришедших игроков будут сторнированы"),
+    );
     expect(await within(row).findByText("Отменён")).toBeInTheDocument();
-    expect(buttonNames(row)).toEqual(["Регистрации"]);  // no editing or cancelling
+    expect(buttonNames(row)).toEqual(["Регистрации", "Касса"]);  // no editing or cancelling
     expect(fetch).toHaveBeenCalledWith(
       "/api/clubs/7/tournaments/5/cancel",
       expect.objectContaining({ method: "POST" }),

@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 from app.models import Club
 from tests.clock import FakeClock
 from tests.factories import create_club
-from tests.game import ready_tournament
+from tests.game import CASH, ready_tournament
 from tests.login import log_in
 from tests.players import a_player, switch_to_another_club
 from tests.tournaments import a_tournament
@@ -112,7 +112,7 @@ def test_admin_cancels_a_registration_before_the_tournament_starts(
     cancelled = client.delete(f"{registrations}/{ivan['id']}")
     cancelled_again = client.delete(f"{registrations}/{ivan['id']}")
 
-    assert cancelled.status_code == 204
+    assert cancelled.status_code == 200
     assert cancelled_again.status_code == 404
     assert cancelled_again.json()["detail"] == "Игрок не зарегистрирован на этот турнир"
     assert client.get(registrations).json()["registrations"] == [
@@ -143,7 +143,7 @@ def test_check_in_closes_once_the_tournament_has_started(client: TestClient, clu
     url, players = ready_tournament(client, club, arrived=2, not_arrived=1)
     client.post(f"{url}/start")
 
-    checked_in = client.post(f"{url}/registrations/{players[2]['id']}/check-in")
+    checked_in = client.post(f"{url}/registrations/{players[2]['id']}/check-in", json=CASH)
     undone = client.delete(f"{url}/registrations/{players[0]['id']}/check-in")
 
     for refused in (checked_in, undone):
@@ -166,15 +166,15 @@ def test_check_in_is_open_from_12_hours_before_to_12_hours_after_the_start(
     client.post(registrations, json={"player_id": ivan["id"]})
     client.post(registrations, json={"player_id": maria["id"]})
 
-    too_early = client.post(f"{registrations}/{ivan['id']}/check-in")
+    too_early = client.post(f"{registrations}/{ivan['id']}/check-in", json=CASH)
     early_listing = client.get(registrations).json()
     clock.advance(timedelta(hours=19))  # 12 hours before the start
-    checked_in = client.post(f"{registrations}/{ivan['id']}/check-in")
-    checked_in_again = client.post(f"{registrations}/{ivan['id']}/check-in")
+    checked_in = client.post(f"{registrations}/{ivan['id']}/check-in", json=CASH)
+    checked_in_again = client.post(f"{registrations}/{ivan['id']}/check-in", json=CASH)
     clock.advance(timedelta(hours=24))  # 12 hours after the start
-    latecomer = client.post(f"{registrations}/{maria['id']}/check-in")
+    latecomer = client.post(f"{registrations}/{maria['id']}/check-in", json=CASH)
     clock.advance(timedelta(minutes=1))
-    too_late = client.post(f"{registrations}/{maria['id']}/check-in")
+    too_late = client.post(f"{registrations}/{maria['id']}/check-in", json=CASH)
 
     assert too_early.status_code == 409
     assert too_early.json()["detail"] == "Отметка о приходе откроется за 12 часов до начала турнира"
@@ -199,12 +199,12 @@ def test_admin_undoes_a_check_in_made_by_mistake(
     ivan = add_player(client, club, "Иван Петров", "+79135551234")
     registrations = create_tournament(client, club, starts_at="2026-09-26T19:00:00Z")
     client.post(registrations, json={"player_id": ivan["id"]})
-    client.post(f"{registrations}/{ivan['id']}/check-in")
+    client.post(f"{registrations}/{ivan['id']}/check-in", json=CASH)
 
     undone = client.delete(f"{registrations}/{ivan['id']}/check-in")
 
     assert undone.status_code == 200
-    assert undone.json() == {"player": ivan, "status": "registered"}
+    assert undone.json() == {"player": ivan, "status": "registered", "refunded": 2000}
     listing = client.get(registrations).json()
     assert listing["check_in_open"] is True
     assert listing["registrations"] == [{"player": ivan, "status": "registered"}]
@@ -216,7 +216,7 @@ def test_nobody_checks_in_to_a_cancelled_tournament(client: TestClient, club: Cl
     client.post(registrations, json={"player_id": ivan["id"]})
     client.post(registrations.replace("/registrations", "/cancel"))
 
-    response = client.post(f"{registrations}/{ivan['id']}/check-in")
+    response = client.post(f"{registrations}/{ivan['id']}/check-in", json=CASH)
 
     assert response.status_code == 409
     assert response.json()["detail"] == "Турнир отменён"
@@ -240,7 +240,7 @@ def test_admin_cannot_touch_another_clubs_registrations(
     assert "Иван" not in listed.text
     assert client.post(registrations, json={"player_id": stranger["id"]}).status_code == 403
     assert client.delete(f"{registrations}/{ivan['id']}").status_code == 403
-    assert client.post(f"{registrations}/{ivan['id']}/check-in").status_code == 403
+    assert client.post(f"{registrations}/{ivan['id']}/check-in", json=CASH).status_code == 403
     assert client.delete(f"{registrations}/{ivan['id']}/check-in").status_code == 403
     # Nor through their own club's URL with the other club's tournament id.
     assert client.get(via_own_club).status_code == 404

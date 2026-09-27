@@ -4,12 +4,14 @@ import type {
   BoardState,
   ClubRating,
   GameState,
+  PaymentMethod,
   Player,
   Registration,
   SeatedPlayer,
   Tournament,
   TournamentList,
   TournamentResult,
+  Transaction,
 } from "../api";
 
 export const ME = {
@@ -57,6 +59,7 @@ export function aTournament(overrides: Partial<Tournament> = {}): Tournament {
     reentry_until_level: 2,
     addon_at_level: 2,
     addon_stack: 30000,
+    addon_price: 1000,
     late_registration_until_level: 3,
     seats_per_table: 9,
     status: "scheduled",
@@ -122,6 +125,11 @@ type FakeBackendOptions = {
   results?: Record<number, TournamentResult[]>;
   /** Club ratings by season, the current season first. */
   ratings?: ClubRating[];
+  /** What the backend gives back, by player id, when a player who came is taken off or their
+   * check-in undone; by default the tournament's buy-in. */
+  refunds?: Record<number, number>;
+  /** Cashier operations by tournament id, in the order they were made. */
+  cashiers?: Record<number, Transaction[]>;
 };
 
 const CONSENT_MISSING = "Без согласия на обработку персональных данных игрока завести нельзя";
@@ -157,6 +165,8 @@ export function fakeBackend({
   boards = {},
   results = {},
   ratings = [],
+  refunds = {},
+  cashiers = {},
 }: FakeBackendOptions = {}) {
   let session = loggedIn;
   const state: TournamentList = { live: [], ...structuredClone(tournaments) };
@@ -165,6 +175,7 @@ export function fakeBackend({
   const signedUp: Record<number, Registration[]> = structuredClone(registrations);
   const played: Record<number, GameState> = structuredClone(games);
   const finished: Record<number, TournamentResult[]> = structuredClone(results);
+  const ledgers: Record<number, Transaction[]> = structuredClone(cashiers);
   let nextId = 100;
   const clubTournaments = `/api/clubs/${ME.club.id}/tournaments`;
   const clubPlayersUrl = `/api/clubs/${ME.club.id}/players`;
@@ -212,12 +223,19 @@ export function fakeBackend({
     const [, playerId, checkIn] = rest.match(/^\/(\d+)(\/check-in)?$/) ?? [];
     const registration = list.find((r) => r.player.id === Number(playerId));
     if (!registration) return json({ detail: "Игрок не зарегистрирован на этот турнир" }, 404);
-    if (checkIn) {
-      registration.status = method === "POST" ? "checked_in" : "registered";
+    const tournament = [...state.live, ...state.upcoming, ...state.past].find((t) => t.id === tournamentId);
+    const refunded =
+      registration.status === "registered" ? 0 : (refunds[registration.player.id] ?? tournament?.buy_in ?? 0);
+    if (checkIn && method === "POST") {
+      registration.status = "checked_in";
       return json(registration);
     }
+    if (checkIn) {
+      registration.status = "registered";
+      return json({ ...registration, refunded });
+    }
     signedUp[tournamentId] = list.filter((r) => r !== registration);
-    return new Response(null, { status: 204 });
+    return json({ refunded });
   }
 
   // A much simplified game: enough to show that the admin panel sends each action and shows
@@ -327,6 +345,42 @@ export function fakeBackend({
     return json({ status: "finished", results: finished[tournamentId] });
   }
 
+  // The cashier adds up the operations as the backend does; the backend's tests are the proof.
+  function cashierRoute(tournamentId: number, transactionId: number, action?: string, body?: { payment_method: PaymentMethod }) {
+    const ledger = (ledgers[tournamentId] ??= []);
+    const add = (from: Transaction, changes: Partial<Transaction>) =>
+      ledger.push({
+        ...from,
+        id: Math.max(0, ...ledger.map((t) => t.id)) + 1,
+        reverses_id: null,
+        replaces_id: null,
+        admin: ME.admin,
+        ...changes,
+      });
+    const original = ledger.find((t) => t.id === transactionId);
+    if (action && !original) return json({ detail: "Операция не найдена" }, 404);
+    if (original && action) add(original, { amount: -original.amount, reverses_id: original.id });
+    if (original && action === "payment-method" && body) {
+      add(original, { payment_method: body.payment_method, replaces_id: original.id });
+    }
+    const reversedBy = new Map(ledger.flatMap((t) => (t.reverses_id === null ? [] : [[t.reverses_id, t.id]])));
+    const standing = ledger.filter((t) => t.reverses_id === null && !reversedBy.has(t.id));
+    const sum = (list: Transaction[]) => list.reduce((total, t) => total + t.amount, 0);
+    return json({
+      by_kind: (["buy_in", "reentry", "addon"] as const).map((kind) => ({
+        kind,
+        count: standing.filter((t) => t.kind === kind).length,
+        amount: sum(ledger.filter((t) => t.kind === kind)),
+      })),
+      by_method: (["cash", "card"] as const).map((method) => ({
+        payment_method: method,
+        amount: sum(ledger.filter((t) => t.payment_method === method)),
+      })),
+      total: sum(ledger),
+      transactions: ledger.map((t) => ({ ...t, reversed_by_id: reversedBy.get(t.id) ?? null })),
+    });
+  }
+
   const fetch = vi.fn(async (url: string, init?: RequestInit) => {
     const method = init?.method ?? "GET";
     const route = `${method} ${url}`;
@@ -377,6 +431,12 @@ export function fakeBackend({
       const season = searchParams.get("season");
       const rating = season ? ratings.find((r) => r.season.id === season) : ratings[0];
       return rating ? json(rating) : json({ detail: "Такого сезона нет" }, 404);
+    }
+    const cashierMatch = url.match(
+      /^\/api\/clubs\/\d+\/tournaments\/(\d+)\/cashier(?:\/transactions\/(\d+)\/(reverse|payment-method))?$/,
+    );
+    if (cashierMatch) {
+      return cashierRoute(Number(cashierMatch[1]), Number(cashierMatch[2]), cashierMatch[3], body);
     }
     const resultsMatch = url.match(/^\/api\/clubs\/\d+\/tournaments\/(\d+)\/results(?:\/(\d+))?$/);
     if (resultsMatch) {

@@ -9,6 +9,7 @@ import {
   RejectedError,
   updateTournament,
 } from "./api";
+import CashierPage from "./CashierPage";
 import { startFormat } from "./dates";
 import GamePage from "./GamePage";
 import RegistrationsPage from "./RegistrationsPage";
@@ -29,11 +30,12 @@ type View =
   | { screen: "edit"; tournament: Tournament }
   | { screen: "registrations"; tournament: Tournament }
   | { screen: "game"; tournament: Tournament }
-  | { screen: "results"; tournament: Tournament };
+  | { screen: "results"; tournament: Tournament }
+  | { screen: "cashier"; tournament: Tournament };
 
 /** The club's tournaments: upcoming ones can be edited or cancelled, past ones only viewed.
- * Every tournament opens its registrations, all but cancelled ones are run from here, and
- * finished ones open their results. */
+ * Every tournament opens its registrations and its cashier, all but cancelled ones are run from
+ * here, and finished ones open their results. */
 export default function TournamentsPage({ club }: { club: Club }) {
   const [list, setList] = useState<ListState>({ status: "loading" });
   const [view, setView] = useState<View>({ screen: "list" });
@@ -52,7 +54,9 @@ export default function TournamentsPage({ club }: { club: Club }) {
   }
 
   function cancel(tournament: Tournament) {
-    const question = `Отменить турнир «${tournament.name}»? Вернуть его будет нельзя.`;
+    const question =
+      `Отменить турнир «${tournament.name}»? Вернуть его будет нельзя. ` +
+      "Бай-ины пришедших игроков будут сторнированы.";
     if (!window.confirm(question)) return;
     cancelTournament(club.id, tournament.id)
       .then(loadList)
@@ -77,8 +81,13 @@ export default function TournamentsPage({ club }: { club: Club }) {
         tournament={tournament}
         onBack={backToList}
         onResults={() => setView({ screen: "results", tournament })}
+        onCashier={() => setView({ screen: "cashier", tournament })}
       />
     );
+  }
+
+  if (view.screen === "cashier") {
+    return <CashierPage club={club} tournament={view.tournament} onBack={backToList} />;
   }
 
   if (view.screen === "results") {
@@ -131,6 +140,7 @@ export default function TournamentsPage({ club }: { club: Club }) {
               empty=""
               tournaments={list.tournaments.live}
               onOpen={(tournament) => setView({ screen: "registrations", tournament })}
+              onCashier={(tournament) => setView({ screen: "cashier", tournament })}
               onRun={(tournament) => setView({ screen: "game", tournament })}
             />
           )}
@@ -139,6 +149,7 @@ export default function TournamentsPage({ club }: { club: Club }) {
             empty="Предстоящих турниров нет"
             tournaments={list.tournaments.upcoming}
             onOpen={(tournament) => setView({ screen: "registrations", tournament })}
+            onCashier={(tournament) => setView({ screen: "cashier", tournament })}
             onRun={(tournament) => setView({ screen: "game", tournament })}
             onEdit={(tournament) => setView({ screen: "edit", tournament })}
             onCancel={cancel}
@@ -148,6 +159,7 @@ export default function TournamentsPage({ club }: { club: Club }) {
             empty="Прошедших турниров пока нет"
             tournaments={list.tournaments.past}
             onOpen={(tournament) => setView({ screen: "registrations", tournament })}
+            onCashier={(tournament) => setView({ screen: "cashier", tournament })}
             onRun={(tournament) => setView({ screen: "game", tournament })}
             onResults={(tournament) => setView({ screen: "results", tournament })}
           />
@@ -162,6 +174,7 @@ function TournamentSection({
   empty,
   tournaments,
   onOpen,
+  onCashier,
   onRun,
   onEdit,
   onCancel,
@@ -171,6 +184,7 @@ function TournamentSection({
   empty: string;
   tournaments: Tournament[];
   onOpen: (tournament: Tournament) => void;
+  onCashier: (tournament: Tournament) => void;
   /** Opens the running of the tournament; not offered for cancelled ones. */
   onRun: (tournament: Tournament) => void;
   /** Given only for tournaments that have not started yet. */
@@ -196,6 +210,7 @@ function TournamentSection({
                 key={tournament.id}
                 tournament={tournament}
                 onOpen={() => onOpen(tournament)}
+                onCashier={() => onCashier(tournament)}
                 onRun={tournament.status === "cancelled" ? undefined : () => onRun(tournament)}
                 onEdit={onEdit && manageable ? () => onEdit(tournament) : undefined}
                 onCancel={onCancel && manageable ? () => onCancel(tournament) : undefined}
@@ -216,6 +231,7 @@ function TournamentSection({
 function TournamentRow({
   tournament,
   onOpen,
+  onCashier,
   onRun,
   onEdit,
   onCancel,
@@ -223,6 +239,7 @@ function TournamentRow({
 }: {
   tournament: Tournament;
   onOpen: () => void;
+  onCashier: () => void;
   onRun?: () => void;
   onEdit?: () => void;
   onCancel?: () => void;
@@ -264,6 +281,13 @@ function TournamentRow({
             Проведение
           </button>
         )}
+        <button
+          type="button"
+          onClick={onCashier}
+          className="rounded-lg border border-slate-300 px-3 py-1 text-sm"
+        >
+          Касса
+        </button>
         {onResults && (
           <button
             type="button"

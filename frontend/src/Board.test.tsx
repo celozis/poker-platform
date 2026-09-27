@@ -44,6 +44,8 @@ function tile(name: string) {
 
 describe("the hall board", () => {
   it("shows the level, the countdown, what comes next and the players", async () => {
+    // The countdown runs on Date.now(): stopped, so that a slow run does not tick it down.
+    vi.useFakeTimers({ toFake: ["Date"] });
     await openBoard();
 
     expect(await screen.findByRole("heading", { name: "Пятничный турнир" })).toBeInTheDocument();

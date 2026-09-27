@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 
 from app.models import Club
 from tests.clock import FakeClock
-from tests.game import ready_tournament
+from tests.game import CASH, ready_tournament
 from tests.login import log_in
 from tests.players import switch_to_another_club
 
@@ -178,8 +178,8 @@ def test_a_reentry_or_a_late_player_after_a_knock_out_moves_that_place_down(
     client.post(f"{url}/players/{players[0]['id']}/knock-out")  # 4th of 4
     client.post(f"{url}/players/{players[1]['id']}/knock-out")  # 3rd of 4
 
-    reentered = client.post(f"{url}/players/{players[0]['id']}/reentry").json()
-    late = client.post(f"{url}/players/{players[4]['id']}/seat").json()
+    reentered = client.post(f"{url}/players/{players[0]['id']}/reentry", json=CASH).json()
+    late = client.post(f"{url}/players/{players[4]['id']}/seat", json=CASH).json()
 
     # Гость 01 is back in the game, so Гость 02 finished first of the four.
     assert places(reentered) == [("Гость 02", 4)]
@@ -306,10 +306,10 @@ def test_a_knocked_out_player_re_enters_up_to_the_reentry_level_and_its_break(
 
     clock.advance(timedelta(minutes=45))
     client.post(f"{url}/players/{player['id']}/knock-out")
-    on_break = client.post(f"{url}/players/{player['id']}/reentry")
+    on_break = client.post(f"{url}/players/{player['id']}/reentry", json=CASH)
     clock.advance(timedelta(minutes=6))
     client.post(f"{url}/players/{player['id']}/knock-out")
-    too_late = client.post(f"{url}/players/{player['id']}/reentry")
+    too_late = client.post(f"{url}/players/{player['id']}/reentry", json=CASH)
 
     assert on_break.status_code == 200
     assert seated(on_break.json(), player)["reentries"] == 1
@@ -325,7 +325,7 @@ def test_a_player_still_in_the_game_does_not_re_enter(client: TestClient, club: 
     url, players = ready_tournament(client, club, arrived=3)
     client.post(f"{url}/start")
 
-    response = client.post(f"{url}/players/{players[0]['id']}/reentry")
+    response = client.post(f"{url}/players/{players[0]['id']}/reentry", json=CASH)
 
     assert (response.status_code, response.json()["detail"]) == (409, "Игрок Гость 01 ещё в игре")
 
@@ -335,7 +335,7 @@ def test_there_is_no_reentry_in_a_tournament_without_it(client: TestClient, club
     client.post(f"{url}/start")
     client.post(f"{url}/players/{players[0]['id']}/knock-out")
 
-    response = client.post(f"{url}/players/{players[0]['id']}/reentry")
+    response = client.post(f"{url}/players/{players[0]['id']}/reentry", json=CASH)
 
     assert (response.status_code, response.json()["detail"]) == (409, "В этом турнире нет re-entry")
 
@@ -345,13 +345,13 @@ def test_addon_is_taken_on_its_level_once_per_entry(client: TestClient, club: Cl
     client.post(f"{url}/start")
     player_url = f"{url}/players/{players[0]['id']}"
 
-    too_early = client.post(f"{player_url}/addon")
+    too_early = client.post(f"{player_url}/addon", json=CASH)
     client.post(f"{url}/next-level")
-    taken = client.post(f"{player_url}/addon")
-    twice = client.post(f"{player_url}/addon")
+    taken = client.post(f"{player_url}/addon", json=CASH)
+    twice = client.post(f"{player_url}/addon", json=CASH)
     client.post(f"{player_url}/knock-out")
-    client.post(f"{player_url}/reentry")
-    after_reentry = client.post(f"{player_url}/addon")
+    client.post(f"{player_url}/reentry", json=CASH)
+    after_reentry = client.post(f"{player_url}/addon", json=CASH)
 
     assert (too_early.status_code, too_early.json()["detail"]) == (
         409,
@@ -373,11 +373,11 @@ def test_a_reentry_made_before_the_addon_level_gives_no_second_addon(
     client.post(f"{url}/start")
     player_url = f"{url}/players/{players[0]['id']}"
     client.post(f"{player_url}/knock-out")
-    client.post(f"{player_url}/reentry")
+    client.post(f"{player_url}/reentry", json=CASH)
     client.post(f"{url}/next-level")
 
-    first = client.post(f"{player_url}/addon")
-    second = client.post(f"{player_url}/addon")
+    first = client.post(f"{player_url}/addon", json=CASH)
+    second = client.post(f"{player_url}/addon", json=CASH)
 
     assert first.status_code == 200
     assert (second.status_code, second.json()["detail"]) == (409, "Игрок Гость 01 уже взял add-on")
@@ -391,8 +391,8 @@ def test_addon_needs_a_player_in_the_game_and_a_tournament_that_offers_it(
     client.post(f"{url}/start")
     client.post(f"{url}/players/{players[0]['id']}/knock-out")
 
-    none_offered = client.post(f"{url}/players/{players[1]['id']}/addon")
-    out = client.post(f"{url}/players/{players[0]['id']}/addon")
+    none_offered = client.post(f"{url}/players/{players[1]['id']}/addon", json=CASH)
+    out = client.post(f"{url}/players/{players[0]['id']}/addon", json=CASH)
 
     assert (none_offered.status_code, none_offered.json()["detail"]) == (
         409,
@@ -416,8 +416,8 @@ def test_a_late_player_is_registered_and_seated_while_late_registration_is_open(
     ).json()["player"]
 
     registered = client.post(f"{url}/registrations", json={"player_id": newcomer["id"]})
-    seated_newcomer = client.post(f"{url}/players/{newcomer['id']}/seat").json()
-    seated_late = client.post(f"{url}/players/{players[7]['id']}/seat").json()
+    seated_newcomer = client.post(f"{url}/players/{newcomer['id']}/seat", json=CASH).json()
+    seated_late = client.post(f"{url}/players/{players[7]['id']}/seat", json=CASH).json()
     clock.advance(timedelta(minutes=20))
     registered_too_late = client.post(f"{url}/registrations", json={"player_id": players[0]["id"]})
 
@@ -439,9 +439,9 @@ def test_late_seating_is_refused_once_late_registration_closes(
     )
     client.post(f"{url}/start")
 
-    already = client.post(f"{url}/players/{players[0]['id']}/seat")
+    already = client.post(f"{url}/players/{players[0]['id']}/seat", json=CASH)
     clock.advance(timedelta(minutes=20))
-    too_late = client.post(f"{url}/players/{players[2]['id']}/seat")
+    too_late = client.post(f"{url}/players/{players[2]['id']}/seat", json=CASH)
 
     assert (already.status_code, already.json()["detail"]) == (409, "Игрок Гость 01 уже в игре")
     assert (too_late.status_code, too_late.json()["detail"]) == (

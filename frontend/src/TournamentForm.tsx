@@ -38,6 +38,7 @@ type Fields = {
   reentryUntilLevel: string;
   addonAtLevel: string;
   addonStack: string;
+  addonPrice: string;
   lateRegistrationUntilLevel: string;
   seatsPerTable: string;
 };
@@ -51,6 +52,7 @@ function initialFields(tournament?: Tournament): Fields {
     reentryUntilLevel: numberText(tournament?.reentry_until_level ?? null),
     addonAtLevel: numberText(tournament?.addon_at_level ?? null),
     addonStack: numberText(tournament?.addon_stack ?? null),
+    addonPrice: numberText(tournament?.addon_price ?? null),
     lateRegistrationUntilLevel: numberText(tournament?.late_registration_until_level ?? null),
     seatsPerTable: String(tournament?.seats_per_table ?? 9),
   };
@@ -115,6 +117,7 @@ export default function TournamentForm({
         reentry_until_level: optionalNumber(fields.reentryUntilLevel),
         addon_at_level: optionalNumber(fields.addonAtLevel),
         addon_stack: optionalNumber(fields.addonStack),
+        addon_price: optionalNumber(fields.addonPrice),
         late_registration_until_level: optionalNumber(fields.lateRegistrationUntilLevel),
         seats_per_table: Number(fields.seatsPerTable),
       });
@@ -241,6 +244,16 @@ export default function TournamentForm({
               min={1}
               value={fields.addonStack}
               onChange={changeHandler("addonStack")}
+              className={inputClass}
+            />
+          </label>
+          <label className={labelClass}>
+            Стоимость add-on, ₽
+            <input
+              type="number"
+              min={0}
+              value={fields.addonPrice}
+              onChange={changeHandler("addonPrice")}
               className={inputClass}
             />
           </label>

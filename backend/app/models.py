@@ -69,6 +69,9 @@ class Tournament(Base):
     addon_at_level: Mapped[int | None]
     # Chips an add-on gives; None when the add-on is not offered.
     addon_stack: Mapped[int | None]
+    # What an add-on costs, in roubles; None when the add-on is not offered. A re-entry costs
+    # the buy-in.
+    addon_price: Mapped[int | None]
     late_registration_until_level: Mapped[int | None]
     seats_per_table: Mapped[int] = mapped_column(default=9)
     # The secret part of the hall board's link (/board/<token>): the board opens without login,
@@ -168,3 +171,31 @@ class Registration(Base):
         if self.table_number is not None:
             return "in_game"
         return "registered" if self.checked_in_at is None else "checked_in"
+
+
+class Transaction(Base):
+    """A payment of a tournament: a buy-in, a re-entry or an add-on paid in cash or by card, and
+    the admin who took it. Transactions are only ever added: a mistaken one is reversed by
+    a storno, a transaction of the opposite amount that points at it (app/cashier.py)."""
+
+    __tablename__ = "transactions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    club_id: Mapped[int] = mapped_column(ForeignKey("clubs.id"), index=True)
+    tournament_id: Mapped[int] = mapped_column(ForeignKey("tournaments.id"), index=True)
+    player_id: Mapped[int] = mapped_column(ForeignKey("players.id"), index=True)
+    admin_id: Mapped[int] = mapped_column(ForeignKey("admins.id"))
+    # buy_in, reentry or addon; a storno keeps the kind of the transaction it reverses.
+    kind: Mapped[str] = mapped_column(String(20))
+    # In roubles; negative for a storno.
+    amount: Mapped[int]
+    # cash or card
+    payment_method: Mapped[str] = mapped_column(String(10))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    # The transaction this storno reverses; a transaction is reversed at most once.
+    reverses_id: Mapped[int | None] = mapped_column(ForeignKey("transactions.id"), unique=True)
+    # The transaction taken the wrong way that this one, the same payment, replaces.
+    replaces_id: Mapped[int | None] = mapped_column(ForeignKey("transactions.id"))
+
+    player: Mapped[Player] = relationship()
+    admin: Mapped[Admin] = relationship()

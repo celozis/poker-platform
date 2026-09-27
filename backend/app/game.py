@@ -19,7 +19,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import contains_eager
 
 from app import realtime
-from app.auth import DbSession, Now
+from app.auth import CurrentAdmin, DbSession, Now
 from app.blind_clock import BlindClock
 from app.clubs import AdminClub
 from app.entry_windows import EntryWindows, entry_windows
@@ -32,6 +32,7 @@ from app.schemas import (
     GameState,
     MoveIn,
     MoveOut,
+    PaymentIn,
     PlayerOut,
     RegistrationOut,
     SeatedPlayer,
@@ -47,6 +48,7 @@ from app.seating import (
     suggested_move,
 )
 from app.tournaments import club_tournament
+from app.transactions import take_payment
 
 router = APIRouter(prefix="/api/clubs/{club_id}/tournaments/{tournament_id}")
 
@@ -384,9 +386,17 @@ def undo_knock_out(
 
 @router.post("/players/{player_id}/reentry")
 def reentry(
-    tournament_id: int, player_id: int, club: AdminClub, session: DbSession, now: Now, rng: Rng
+    tournament_id: int,
+    player_id: int,
+    club: AdminClub,
+    admin: CurrentAdmin,
+    session: DbSession,
+    now: Now,
+    rng: Rng,
+    payment: PaymentIn | None = None,
 ) -> GameState:
-    """Takes a knocked-out player back into the game at the table with the fewest players."""
+    """Takes a knocked-out player back into the game at the table with the fewest players; the
+    player pays for it as for a buy-in."""
     tournament = _live_tournament(session, club, tournament_id)
     registrations = _registrations(session, tournament)
     registration = _registered(registrations, player_id)
@@ -395,6 +405,7 @@ def reentry(
         raise _refuse("В этом турнире нет re-entry")
     if not current_windows(tournament, now).reentry:
         raise _refuse(f"Re-entry закрыт: он был до уровня {tournament.reentry_until_level}")
+    take_payment(session, tournament, player_id, "reentry", payment, admin, now)
     registration.finish_order = None
     registration.reentries += 1
     registration.addon_this_entry = False
@@ -404,9 +415,16 @@ def reentry(
 
 @router.post("/players/{player_id}/addon")
 def addon(
-    tournament_id: int, player_id: int, club: AdminClub, session: DbSession, now: Now
+    tournament_id: int,
+    player_id: int,
+    club: AdminClub,
+    admin: CurrentAdmin,
+    session: DbSession,
+    now: Now,
+    payment: PaymentIn | None = None,
 ) -> GameState:
-    """One add-on per entry: a player who re-entered can take it again."""
+    """One add-on per entry: a player who re-entered can take it again. The player pays the
+    tournament's add-on price."""
     tournament = _live_tournament(session, club, tournament_id)
     registration = _registered(_registrations(session, tournament), player_id)
     _require_in_game(registration)
@@ -416,6 +434,7 @@ def addon(
         raise _refuse(f"Add-on берут на уровне {tournament.addon_at_level} и в перерыве после него")
     if registration.addon_this_entry:
         raise _refuse(f"Игрок {registration.player.name} уже взял add-on")
+    take_payment(session, tournament, player_id, "addon", payment, admin, now)
     registration.addons += 1
     registration.addon_this_entry = True
     return _saved(session, tournament, now)
@@ -423,10 +442,17 @@ def addon(
 
 @router.post("/players/{player_id}/seat")
 def seat_late_player(
-    tournament_id: int, player_id: int, club: AdminClub, session: DbSession, now: Now, rng: Rng
+    tournament_id: int,
+    player_id: int,
+    club: AdminClub,
+    admin: CurrentAdmin,
+    session: DbSession,
+    now: Now,
+    rng: Rng,
+    payment: PaymentIn | None = None,
 ) -> GameState:
     """Seats a registered player who was not there at the start, while late registration is
-    open; this also checks them in."""
+    open; this also checks them in, and they pay the buy-in."""
     tournament = _live_tournament(session, club, tournament_id)
     registrations = _registrations(session, tournament)
     registration = _registered(registrations, player_id)
@@ -436,7 +462,9 @@ def seat_late_player(
     closed = late_registration_closed_because(tournament, now)
     if closed:
         raise _refuse(closed)
-    registration.checked_in_at = registration.checked_in_at or now
+    if registration.checked_in_at is None:
+        take_payment(session, tournament, player_id, "buy_in", payment, admin, now)
+        registration.checked_in_at = now
     _sit(registration, seat_for_newcomer(_seating(registrations), tournament.seats_per_table, rng))
     return _saved(session, tournament, now)
 

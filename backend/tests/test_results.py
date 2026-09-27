@@ -4,7 +4,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.models import Club
-from tests.game import knock_out, played_tournament, ready_tournament
+from tests.game import CASH, knock_out, played_tournament, ready_tournament
 from tests.players import switch_to_another_club
 
 
@@ -36,7 +36,7 @@ def test_a_player_who_re_entered_has_one_result_and_is_counted_once(
     url, players = ready_tournament(client, club, arrived=4)
     client.post(f"{url}/start")
     knock_out(client, url, players[0])
-    client.post(f"{url}/players/{players[0]['id']}/reentry")
+    client.post(f"{url}/players/{players[0]['id']}/reentry", json=CASH)
     knock_out(client, url, players[1], players[0], players[2])
 
     results = client.get(f"{url}/results").json()

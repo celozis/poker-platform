@@ -8,6 +8,8 @@ from tests.tournaments import a_tournament
 
 # Seven hours after FakeClock's now, so check-in is open.
 TONIGHT = "2026-09-26T19:00:00Z"
+# How a player pays for a check-in, a re-entry, an add-on or a late seat.
+CASH = {"payment_method": "cash"}
 
 
 def ready_tournament(
@@ -33,7 +35,7 @@ def ready_tournament(
         ).json()["player"]
         client.post(f"{url}/registrations", json={"player_id": added["id"]})
         if number <= arrived:
-            client.post(f"{url}/registrations/{added['id']}/check-in")
+            client.post(f"{url}/registrations/{added['id']}/check-in", json=CASH)
         players.append(added)
     return url, players
 

@@ -2,18 +2,22 @@ import { type ReactNode, useCallback, useEffect, useId, useRef, useState } from 
 import {
   addPlayer,
   cancelRegistration,
+  checkIn,
   type Club,
   fetchRegistrations,
   type Player,
   type Registration,
+  type Refund,
   registerPlayer,
   RejectedError,
-  setCheckedIn,
   type Tournament,
   type TournamentRegistrations,
+  undoCheckIn,
 } from "./api";
 import { startFormat } from "./dates";
 import { inputClass, SERVER_UNREACHABLE, smallButton } from "./forms";
+import { usePayment } from "./PaymentDialog";
+import { money, paidFor } from "./payments";
 import { formatPhone } from "./phones";
 import PlayerForm, { addedMessage } from "./PlayerForm";
 import { usePlayerSearch } from "./usePlayerSearch";
@@ -42,7 +46,9 @@ export default function RegistrationsPage({
 }) {
   const [state, setState] = useState<LoadState>({ status: "loading" });
   const [actionError, setActionError] = useState("");
+  const [notice, setNotice] = useState("");
   const latestLoad = useRef(0);
+  const { askToPay, paymentDialog } = usePayment();
 
   const load = useCallback(() => {
     // Quick clicks reload several times; only the latest answer may replace the list.
@@ -54,21 +60,46 @@ export default function RegistrationsPage({
 
   useEffect(load, [load]);
 
-  /** Runs a change and reloads the list; a refusal is shown above the list. */
-  async function change(action: () => Promise<unknown>) {
+  /** Runs a change and reloads the list; a refusal is shown above the list, and what the change
+   * tells the admin, if anything, as a notice. */
+  async function change(action: () => Promise<string | void>) {
     setActionError("");
+    setNotice("");
     try {
-      await action();
+      setNotice((await action()) ?? "");
     } catch (error) {
       setActionError(error instanceof RejectedError ? error.messages.join("\n") : SERVER_UNREACHABLE);
     }
     load();
   }
 
+  /** A player who comes pays the buy-in; a mistaken check-in gives it back. */
+  function setArrived(registration: Registration, arrived: boolean) {
+    const { player } = registration;
+    if (arrived) {
+      askToPay(paidFor("buy_in", player), tournament.buy_in, (method) =>
+        change(async () => {
+          await checkIn(club.id, tournament.id, player.id, method);
+        }),
+      );
+      return;
+    }
+    change(async () => {
+      const undone = await undoCheckIn(club.id, tournament.id, player.id);
+      return `Приход игрока ${player.name} отменён${giveBack(undone)}`;
+    });
+  }
+
   function cancel(registration: Registration) {
     const { player } = registration;
-    if (!window.confirm(`Снять ${player.name} с регистрации на турнир?`)) return;
-    change(() => cancelRegistration(club.id, tournament.id, player.id));
+    // Only those who came have paid.
+    const paid = registration.status !== "registered" && tournament.buy_in > 0;
+    const question = `Снять ${player.name} с регистрации на турнир?`;
+    if (!window.confirm(paid ? `${question} Бай-ин будет сторнирован.` : question)) return;
+    change(async () => {
+      const refund = await cancelRegistration(club.id, tournament.id, player.id);
+      return `Регистрация игрока ${player.name} отменена${giveBack(refund)}`;
+    });
   }
 
   return (
@@ -104,7 +135,11 @@ export default function RegistrationsPage({
             <SignUp
               club={club}
               registeredIds={new Set(state.data.registrations.map((r) => r.player.id))}
-              register={(playerId) => change(() => registerPlayer(club.id, tournament.id, playerId))}
+              register={(player) =>
+                change(async () => {
+                  await registerPlayer(club.id, tournament.id, player.id);
+                })
+              }
             />
           ) : (
             <p className="rounded-2xl bg-white p-4 text-sm text-slate-600 shadow-sm">
@@ -114,25 +149,34 @@ export default function RegistrationsPage({
           <RegisteredList
             data={state.data}
             error={actionError}
-            onCheckIn={(registration, arrived) =>
-              change(() => setCheckedIn(club.id, tournament.id, registration.player.id, arrived))
-            }
+            notice={notice}
+            onCheckIn={setArrived}
             onCancel={cancel}
           />
         </>
       )}
+      {paymentDialog}
     </div>
   );
+}
+
+/** What the admin is told to give back to the player, from what the server actually reversed:
+ * the buy-in paid, whatever it is now. */
+function giveBack({ refunded }: Refund): string {
+  return refunded > 0 ? `, бай-ин сторнирован: верните игроку ${money(refunded)}` : "";
 }
 
 function RegisteredList({
   data,
   error,
+  notice,
   onCheckIn,
   onCancel,
 }: {
   data: TournamentRegistrations;
   error: string;
+  /** What the last change did, when the admin needs to know, such as money to give back. */
+  notice: string;
   onCheckIn: (registration: Registration, arrived: boolean) => void;
   onCancel: (registration: Registration) => void;
 }) {
@@ -157,6 +201,11 @@ function RegisteredList({
       {error && (
         <p role="alert" className="mb-4 whitespace-pre-line rounded-lg bg-red-50 p-3 text-sm text-red-800">
           {error}
+        </p>
+      )}
+      {notice && (
+        <p role="status" className="mb-4 rounded-lg bg-emerald-50 p-3 text-sm text-emerald-800">
+          {notice}
         </p>
       )}
       {registrations.length === 0 ? (
@@ -232,7 +281,7 @@ export function SignUp({
   /** Players already in the tournament, who are not offered again. */
   registeredIds: Set<number>;
   /** Registers the player; the caller shows a refusal. */
-  register: (playerId: number) => void;
+  register: (player: Player) => void;
   title?: string;
   registerLabel?: string;
   addLabel?: string;
@@ -266,7 +315,7 @@ export function SignUp({
               // The player is on the club's list now, whatever happens to the registration.
               setAddingNew(false);
               setNotice(addedMessage(added));
-              register(added.player.id);
+              register(added.player);
             }}
           />
         </div>
@@ -310,7 +359,7 @@ function FoundPlayers({
 }: {
   players: Player[];
   registeredIds: Set<number>;
-  register: (playerId: number) => void;
+  register: (player: Player) => void;
   registerLabel: string;
 }) {
   if (players.length === 0) {
@@ -338,7 +387,7 @@ function FoundPlayers({
           {registeredIds.has(player.id) ? (
             <span className="text-sm text-slate-500">Уже зарегистрирован</span>
           ) : (
-            <button type="button" onClick={() => register(player.id)} className={smallButton}>
+            <button type="button" onClick={() => register(player)} className={smallButton}>
               {registerLabel}
             </button>
           )}

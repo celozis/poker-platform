@@ -8,11 +8,12 @@ from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import select
 
 from app import realtime
-from app.auth import DbSession, Now
+from app.auth import CurrentAdmin, DbSession, Now
 from app.clubs import AdminClub
 from app.models import Club, Tournament
 from app.schemas import TournamentIn, TournamentList, TournamentOut
 from app.tournament_rules import tournament_errors
+from app.transactions import give_buy_ins_back
 
 router = APIRouter(prefix="/api/clubs/{club_id}/tournaments")
 
@@ -40,6 +41,7 @@ def _checked(tournament: TournamentIn, now: datetime) -> dict[str, Any]:
     fields = tournament.model_dump()
     if tournament.addon_at_level is None:
         fields["addon_stack"] = None
+        fields["addon_price"] = None
     return fields
 
 
@@ -93,12 +95,14 @@ def update_tournament(
 
 @router.post("/{tournament_id}/cancel")
 def cancel_tournament(
-    tournament_id: int, club: AdminClub, session: DbSession, now: Now
+    tournament_id: int, club: AdminClub, admin: CurrentAdmin, session: DbSession, now: Now
 ) -> TournamentOut:
+    """Cancels a tournament that has not started; the buy-ins of those who came are given back."""
     tournament = club_tournament(session, club, tournament_id, for_update=True)
     if tournament.has_started:
         raise HTTPException(status.HTTP_409_CONFLICT, "Турнир уже начался, его нельзя отменить")
     tournament.status = "cancelled"
+    give_buy_ins_back(session, tournament, admin, now)
     session.commit()
     realtime.tournament_changed(tournament.id)
     return TournamentOut.model_validate(tournament)

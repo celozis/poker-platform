@@ -11,7 +11,7 @@ from starlette.websockets import WebSocketDisconnect
 
 from app.models import Club
 from tests.clock import FakeClock
-from tests.game import TONIGHT, ready_tournament
+from tests.game import CASH, TONIGHT, ready_tournament
 from tests.tournaments import a_break, a_level, a_tournament
 
 
@@ -95,9 +95,9 @@ def test_the_board_counts_reentries_and_addons_into_the_average_stack(
     url, board_url = started(client, club, arrived=3, starting_stack=20000, addon_stack=30000)
     first, second, _ = client.get(f"{url}/game").json()["in_game"]
     client.post(f"{url}/players/{first['player']['id']}/knock-out")
-    client.post(f"{url}/players/{first['player']['id']}/reentry")
+    client.post(f"{url}/players/{first['player']['id']}/reentry", json=CASH)
     client.post(f"{url}/next-level")  # the add-on is taken on level 2
-    client.post(f"{url}/players/{second['player']['id']}/addon")
+    client.post(f"{url}/players/{second['player']['id']}/addon", json=CASH)
 
     board = hall.get(board_url).json()
 

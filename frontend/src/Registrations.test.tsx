@@ -111,8 +111,8 @@ describe("tournament registrations", () => {
     expect(screen.getByRole("status")).toHaveTextContent("Игрок Иван Петров уже есть в вашем клубе");
   });
 
-  it("checks in an arrival and undoes a mistaken check-in", async () => {
-    fakeBackend({
+  it("takes the buy-in on checking in an arrival and gives it back when the check-in is undone", async () => {
+    const fetch = fakeBackend({
       loggedIn: true,
       tournaments: { upcoming: [FRIDAY], past: [] },
       players: [IVAN, MARIA],
@@ -127,11 +127,112 @@ describe("tournament registrations", () => {
     const ivan = await within(registered()).findByRole("listitem", { name: "Иван Петров" });
 
     await user.click(within(ivan).getByRole("button", { name: "Отметить приход" }));
+    const payment = screen.getByRole("dialog", { name: "Оплата" });
+    expect(payment).toHaveTextContent("Бай-ин: Иван Петров");
+    expect(payment).toHaveTextContent("2 000 ₽");
+    await user.click(within(payment).getByRole("button", { name: "Карта" }));
+
     expect(await within(ivan).findByText("Пришёл")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(screen.getByText("Зарегистрировано: 2, пришли: 1")).toBeInTheDocument();
+    expect(fetch).toHaveBeenCalledWith(
+      "/api/clubs/7/tournaments/5/registrations/1/check-in",
+      expect.objectContaining({ method: "POST", body: JSON.stringify({ payment_method: "card" }) }),
+    );
 
     await user.click(within(ivan).getByRole("button", { name: "Отменить приход" }));
     expect(await within(ivan).findByText("Зарегистрирован")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Приход игрока Иван Петров отменён, бай-ин сторнирован: верните игроку 2 000 ₽",
+    );
+  });
+
+  it("says what the server actually gave back, not today's buy-in", async () => {
+    fakeBackend({
+      loggedIn: true,
+      tournaments: { upcoming: [FRIDAY], past: [] },
+      players: [IVAN, MARIA],
+      registrations: {
+        5: [
+          { player: IVAN, status: "checked_in" },
+          { player: MARIA, status: "checked_in" },
+        ],
+      },
+      // Paid before the buy-in went up to 2 000 ₽; Maria's was reversed in the cashier already.
+      refunds: { 1: 1500, 2: 0 },
+    });
+    vi.stubGlobal("confirm", vi.fn(() => true));
+    const user = await openRegistrations();
+    const ivan = await within(registered()).findByRole("listitem", { name: "Иван Петров" });
+
+    await user.click(within(ivan).getByRole("button", { name: "Отменить приход" }));
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "Приход игрока Иван Петров отменён, бай-ин сторнирован: верните игроку 1 500 ₽",
+    );
+
+    const maria = within(registered()).getByRole("listitem", { name: "Мария Иванова" });
+    await user.click(within(maria).getByRole("button", { name: "Снять с регистрации" }));
+    expect(await screen.findByRole("status")).toHaveTextContent("Регистрация игрока Мария Иванова отменена");
+    expect(screen.getByRole("status")).not.toHaveTextContent("верните");
+  });
+
+  it("does not check in a player whose payment was called off", async () => {
+    const fetch = fakeBackend({
+      loggedIn: true,
+      tournaments: { upcoming: [FRIDAY], past: [] },
+      players: [IVAN],
+      registrations: { 5: [{ player: IVAN, status: "registered" }] },
+    });
+    const user = await openRegistrations();
+    const ivan = await within(registered()).findByRole("listitem", { name: "Иван Петров" });
+
+    await user.click(within(ivan).getByRole("button", { name: "Отметить приход" }));
+    await user.click(
+      within(screen.getByRole("dialog", { name: "Оплата" })).getByRole("button", { name: "Отмена" }),
+    );
+
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(within(ivan).getByText("Зарегистрирован")).toBeInTheDocument();
+    expect(fetch.mock.calls.some(([url]) => String(url).endsWith("/check-in"))).toBe(false);
+  });
+
+  it("checks in to a free tournament without asking for money", async () => {
+    fakeBackend({
+      loggedIn: true,
+      tournaments: { upcoming: [{ ...FRIDAY, buy_in: 0 }], past: [] },
+      players: [IVAN],
+      registrations: { 5: [{ player: IVAN, status: "registered" }] },
+    });
+    const user = await openRegistrations();
+    const ivan = await within(registered()).findByRole("listitem", { name: "Иван Петров" });
+
+    await user.click(within(ivan).getByRole("button", { name: "Отметить приход" }));
+
+    expect(await within(ivan).findByText("Пришёл")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("gives the buy-in back to a player who came and then drops out", async () => {
+    fakeBackend({
+      loggedIn: true,
+      tournaments: { upcoming: [FRIDAY], past: [] },
+      players: [IVAN],
+      registrations: { 5: [{ player: IVAN, status: "checked_in" }] },
+    });
+    const confirm = vi.fn(() => true);
+    vi.stubGlobal("confirm", confirm);
+    const user = await openRegistrations();
+    const ivan = await within(registered()).findByRole("listitem", { name: "Иван Петров" });
+
+    await user.click(within(ivan).getByRole("button", { name: "Снять с регистрации" }));
+
+    expect(confirm).toHaveBeenCalledWith(
+      "Снять Иван Петров с регистрации на турнир? Бай-ин будет сторнирован.",
+    );
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "Регистрация игрока Иван Петров отменена, бай-ин сторнирован: верните игроку 2 000 ₽",
+    );
+    expect(screen.getByText("Пока никто не зарегистрирован")).toBeInTheDocument();
   });
 
   it("cancels a registration after the admin confirms", async () => {

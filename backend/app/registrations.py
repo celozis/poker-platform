@@ -10,12 +10,20 @@ from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import contains_eager
 
-from app.auth import DbSession, Now
+from app.auth import CurrentAdmin, DbSession, Now
 from app.clubs import AdminClub
 from app.game import late_registration_closed_because
 from app.models import Club, ClubPlayer, Player, Registration, Tournament
-from app.schemas import RegistrationIn, RegistrationOut, TournamentRegistrations
+from app.schemas import (
+    CheckInUndone,
+    PaymentIn,
+    Refund,
+    RegistrationIn,
+    RegistrationOut,
+    TournamentRegistrations,
+)
 from app.tournaments import club_tournament
+from app.transactions import give_buy_ins_back, take_payment
 
 router = APIRouter(prefix="/api/clubs/{club_id}/tournaments/{tournament_id}/registrations")
 
@@ -125,43 +133,74 @@ def _registered(session: DbSession, tournament: Tournament, player_id: int) -> R
     return registration
 
 
-@router.delete("/{player_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{player_id}")
 def cancel_registration(
-    tournament_id: int, player_id: int, club: AdminClub, session: DbSession, now: Now
-) -> None:
+    tournament_id: int,
+    player_id: int,
+    club: AdminClub,
+    admin: CurrentAdmin,
+    session: DbSession,
+    now: Now,
+) -> Refund:
+    """Takes the player off the tournament before the start, giving back a buy-in they paid."""
     tournament = club_tournament(session, club, tournament_id, for_update=True)
     closed = _dropping_out_closed_because(tournament)
     if closed:
         raise HTTPException(status.HTTP_409_CONFLICT, closed)
     session.delete(_registered(session, tournament, player_id))
+    refunded = give_buy_ins_back(session, tournament, admin, now, player_id)
     session.commit()
+    return Refund(refunded=refunded)
 
 
-def _set_checked_in(
-    tournament_id: int, player_id: int, club: Club, session: DbSession, now: Now, checked_in: bool
-) -> RegistrationOut:
+def _check_in_open(
+    session: DbSession, club: Club, tournament_id: int, player_id: int, now: datetime
+) -> tuple[Tournament, Registration]:
+    """The tournament, locked for a change, and the player's registration, while check-in is
+    open."""
     tournament = club_tournament(session, club, tournament_id, for_update=True)
     closed = _check_in_closed_because(tournament, now)
     if closed:
         raise HTTPException(status.HTTP_409_CONFLICT, closed)
-    registration = _registered(session, tournament, player_id)
-    if checked_in and registration.checked_in_at is None:
-        registration.checked_in_at = now
-    if not checked_in:
-        registration.checked_in_at = None
-    session.commit()
-    return RegistrationOut.model_validate(registration)
+    return tournament, _registered(session, tournament, player_id)
 
 
 @router.post("/{player_id}/check-in")
 def check_in(
-    tournament_id: int, player_id: int, club: AdminClub, session: DbSession, now: Now
+    tournament_id: int,
+    player_id: int,
+    club: AdminClub,
+    admin: CurrentAdmin,
+    session: DbSession,
+    now: Now,
+    payment: PaymentIn | None = None,
 ) -> RegistrationOut:
-    return _set_checked_in(tournament_id, player_id, club, session, now, checked_in=True)
+    """Marks the player as come to the club; they pay the buy-in then."""
+    tournament, registration = _check_in_open(session, club, tournament_id, player_id, now)
+    if registration.checked_in_at is None:
+        take_payment(session, tournament, player_id, "buy_in", payment, admin, now)
+        registration.checked_in_at = now
+    session.commit()
+    return RegistrationOut.model_validate(registration)
 
 
 @router.delete("/{player_id}/check-in")
 def undo_check_in(
-    tournament_id: int, player_id: int, club: AdminClub, session: DbSession, now: Now
-) -> RegistrationOut:
-    return _set_checked_in(tournament_id, player_id, club, session, now, checked_in=False)
+    tournament_id: int,
+    player_id: int,
+    club: AdminClub,
+    admin: CurrentAdmin,
+    session: DbSession,
+    now: Now,
+) -> CheckInUndone:
+    """Takes a mistaken check-in back, and the buy-in with it: the answer says how much to give
+    back to the player."""
+    tournament, registration = _check_in_open(session, club, tournament_id, player_id, now)
+    refunded = 0
+    if registration.checked_in_at is not None:
+        refunded = give_buy_ins_back(session, tournament, admin, now, player_id)
+        registration.checked_in_at = None
+    session.commit()
+    return CheckInUndone(
+        **RegistrationOut.model_validate(registration).model_dump(), refunded=refunded
+    )

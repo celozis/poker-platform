@@ -166,8 +166,8 @@ describe("running a tournament", () => {
     expect(await screen.findByRole("heading", { name: "Результаты" })).toBeInTheDocument();
   });
 
-  it("offers re-entry and add-on while their windows are open", async () => {
-    const { user } = await openGame(
+  it("takes the payment for a re-entry and an add-on while their windows are open", async () => {
+    const { user, fetch } = await openGame(
       running({
         windows: { reentry: true, addon: true, late_registration: false },
         in_game: [aSeat(MARIA, 1, 2), aSeat(PETR, 1, 3)],
@@ -177,12 +177,28 @@ describe("running a tournament", () => {
     const out = await screen.findByRole("list", { name: "Выбывшие" });
 
     await user.click(within(within(out).getByRole("listitem", { name: "Иван Петров" })).getByRole("button", { name: "Re-entry" }));
+    const reentryPayment = screen.getByRole("dialog", { name: "Оплата" });
+    expect(reentryPayment).toHaveTextContent("Re-entry: Иван Петров");
+    expect(reentryPayment).toHaveTextContent("2 000 ₽");
+    await user.click(within(reentryPayment).getByRole("button", { name: "Наличные" }));
     const ivan = await within(table("Стол 1")).findByRole("listitem", { name: "Иван Петров" });
     expect(ivan).toHaveTextContent("re-entry: 1");
     const maria = within(table("Стол 1")).getByRole("listitem", { name: "Мария Иванова" });
     await user.click(within(maria).getByRole("button", { name: "Add-on" }));
+    const addonPayment = screen.getByRole("dialog", { name: "Оплата" });
+    expect(addonPayment).toHaveTextContent("Add-on: Мария Иванова");
+    expect(addonPayment).toHaveTextContent("1 000 ₽");
+    await user.click(within(addonPayment).getByRole("button", { name: "Карта" }));
 
     expect(await within(maria).findByText("add-on: 1")).toBeInTheDocument();
+    expect(fetch).toHaveBeenCalledWith(
+      "/api/clubs/7/tournaments/5/players/1/reentry",
+      expect.objectContaining({ body: JSON.stringify({ payment_method: "cash" }) }),
+    );
+    expect(fetch).toHaveBeenCalledWith(
+      "/api/clubs/7/tournaments/5/players/2/addon",
+      expect.objectContaining({ body: JSON.stringify({ payment_method: "card" }) }),
+    );
     // One add-on per entry: Maria has used hers, Ivan has two entries and no add-on yet.
     expect(within(maria).queryByRole("button", { name: "Add-on" })).not.toBeInTheDocument();
     expect(within(ivan).getByRole("button", { name: "Add-on" })).toBeInTheDocument();
@@ -252,8 +268,8 @@ describe("running a tournament", () => {
     expect(await screen.findByRole("region", { name: "Финальный стол" })).toBeInTheDocument();
   });
 
-  it("seats a late player while late registration is open", async () => {
-    const { user } = await openGame(
+  it("seats a late player, who pays the buy-in, while late registration is open", async () => {
+    const { user, fetch } = await openGame(
       running({
         windows: { reentry: false, addon: false, late_registration: true },
         waiting: [{ player: aPlayer({ id: 4, name: "Олег Орлов" }), status: "registered" }],
@@ -267,10 +283,17 @@ describe("running a tournament", () => {
         name: "Посадить",
       }),
     );
+    const payment = screen.getByRole("dialog", { name: "Оплата" });
+    expect(payment).toHaveTextContent("Бай-ин: Олег Орлов");
+    await user.click(within(payment).getByRole("button", { name: "Карта" }));
 
     expect(
       await within(table("Стол 1")).findByRole("listitem", { name: "Олег Орлов" }),
     ).toBeInTheDocument();
+    expect(fetch).toHaveBeenCalledWith(
+      "/api/clubs/7/tournaments/5/players/4/seat",
+      expect.objectContaining({ body: JSON.stringify({ payment_method: "card" }) }),
+    );
   });
 
   it("registers and seats a newcomer found by name during late registration", async () => {
@@ -287,10 +310,21 @@ describe("running a tournament", () => {
         name: "Посадить",
       }),
     );
+    await user.click(
+      within(screen.getByRole("dialog", { name: "Оплата" })).getByRole("button", { name: "Наличные" }),
+    );
 
     expect(
       await within(table("Стол 1")).findByRole("listitem", { name: "Олег Орлов" }),
     ).toBeInTheDocument();
+  });
+
+  it("opens the tournament's cashier from its running", async () => {
+    const { user } = await openGame(running());
+
+    await user.click(await screen.findByRole("button", { name: "Касса" }));
+
+    expect(await screen.findByRole("heading", { name: "Сводка" })).toBeInTheDocument();
   });
 
   it("sends an action once however quickly the admin clicks again", async () => {

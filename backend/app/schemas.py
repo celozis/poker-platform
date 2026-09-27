@@ -65,6 +65,8 @@ class TournamentIn(BaseModel):
     addon_at_level: int | None = None
     # How many chips an add-on gives; needed only when the add-on is offered.
     addon_stack: int | None = None
+    # What an add-on costs, in roubles; needed only when the add-on is offered.
+    addon_price: int | None = None
     late_registration_until_level: int | None = None
     seats_per_table: int = 9
 
@@ -132,6 +134,15 @@ class RegistrationOut(BaseModel):
     # registered: signed up; checked_in: has come to the club on the day; in_game: seated in the
     # running tournament; out: finished with a place.
     status: Literal["registered", "checked_in", "in_game", "out"]
+
+
+class Refund(BaseModel):
+    # Roubles given back to the player by a storno of the buy-in they paid; 0 when none.
+    refunded: int
+
+
+class CheckInUndone(RegistrationOut, Refund):
+    pass
 
 
 class TournamentRegistrations(BaseModel):
@@ -278,3 +289,61 @@ class ClubRating(BaseModel):
     next_season: str | None
     # By points, the most first; equal points by name.
     players: list[RatingRow]
+
+
+TransactionKind = Literal["buy_in", "reentry", "addon"]
+PaymentMethod = Literal["cash", "card"]
+
+
+class PaymentIn(BaseModel):
+    """How the player pays; needed only when there is something to pay."""
+
+    payment_method: PaymentMethod | None = None
+
+
+class PaymentMethodIn(BaseModel):
+    payment_method: PaymentMethod
+
+
+class TransactionOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    created_at: Annotated[AwareDatetime, AfterValidator(_in_utc)]
+    kind: TransactionKind
+    # In roubles; negative for a storno.
+    amount: int
+    payment_method: PaymentMethod
+    player: PlayerOut
+    # Who took the money, or reversed it.
+    admin: AdminOut
+    # The transaction this storno reverses.
+    reverses_id: int | None
+    # The payment taken the wrong way that this one replaces.
+    replaces_id: int | None
+    # The storno that has reversed this transaction, if one has.
+    reversed_by_id: int | None
+
+
+class KindTotal(BaseModel):
+    kind: TransactionKind
+    # Operations that stand: not a storno and not reversed.
+    count: int
+    amount: int
+
+
+class MethodTotal(BaseModel):
+    payment_method: PaymentMethod
+    amount: int
+
+
+class Cashier(BaseModel):
+    """A tournament's cashier: what has been paid, by kind of operation and by payment method."""
+
+    # Buy-in, re-entry and add-on, always all three.
+    by_kind: list[KindTotal]
+    # Cash and card, always both.
+    by_method: list[MethodTotal]
+    total: int
+    # In the order they were made, storno included.
+    transactions: list[TransactionOut]

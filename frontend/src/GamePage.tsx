@@ -7,7 +7,9 @@ import {
   type GameAction,
   type GameState,
   movePlayer,
+  type Player,
   type PlayerAction,
+  type Registration,
   registerPlayer,
   RejectedError,
   runGame,
@@ -17,6 +19,8 @@ import {
 import { describe, formatTime, next, useCountdown } from "./blindClock";
 import { startFormat } from "./dates";
 import { SERVER_UNREACHABLE, smallButton } from "./forms";
+import { usePayment } from "./PaymentDialog";
+import { paidFor } from "./payments";
 import { entries, pointsText } from "./points";
 import { SignUp } from "./RegistrationsPage";
 import { STATUS_NAMES } from "./tournamentStatus";
@@ -29,12 +33,15 @@ export default function GamePage({
   tournament,
   onBack,
   onResults,
+  onCashier,
 }: {
   club: Club;
   tournament: Tournament;
   onBack: () => void;
   /** Opens the finished tournament's results, where places are corrected. */
   onResults: () => void;
+  /** Opens the tournament's cashier, where the payments taken here are seen and put right. */
+  onCashier: () => void;
 }) {
   const [loaded, setLoaded] = useState<Loaded | null>(null);
   const [loadFailed, setLoadFailed] = useState(false);
@@ -42,6 +49,7 @@ export default function GamePage({
   const latestLoad = useRef(0);
   // One action at a time: a second click while the first is on its way is ignored.
   const acting = useRef(false);
+  const { askToPay, paymentDialog } = usePayment();
 
   const show = useCallback((game: GameState) => {
     // Any answer replaces an older one still on its way.
@@ -81,6 +89,18 @@ export default function GamePage({
   const run = (action: GameAction) => change(() => runGame(club.id, tournament.id, action));
   const act = (playerId: number, action: PlayerAction) =>
     change(() => actOnPlayer(club.id, tournament.id, playerId, action));
+  /** A re-entry and an add-on are paid for, and so is a late seat: the buy-in, unless paid on
+   * coming. */
+  const payFor = (player: Player, action: "reentry" | "addon" | "seat", amount: number) =>
+    askToPay(paidFor(action === "seat" ? "buy_in" : action, player), amount, (method) =>
+      change(() => actOnPlayer(club.id, tournament.id, player.id, action, method)),
+    );
+  const seat = (registration: Registration) =>
+    payFor(
+      registration.player,
+      "seat",
+      registration.status === "checked_in" ? 0 : tournament.buy_in,
+    );
   const live = game?.status === "running" || game?.status === "paused";
 
   return (
@@ -98,13 +118,22 @@ export default function GamePage({
               )}
             </p>
           </div>
-          <button
-            type="button"
-            onClick={onBack}
-            className="rounded-lg border border-slate-300 px-4 py-2 font-medium text-slate-700"
-          >
-            Назад к списку
-          </button>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={onCashier}
+              className="rounded-lg border border-slate-300 px-4 py-2 font-medium text-slate-700"
+            >
+              Касса
+            </button>
+            <button
+              type="button"
+              onClick={onBack}
+              className="rounded-lg border border-slate-300 px-4 py-2 font-medium text-slate-700"
+            >
+              Назад к списку
+            </button>
+          </div>
         </div>
         <BoardLink token={tournament.board_token} />
       </div>
@@ -150,7 +179,13 @@ export default function GamePage({
           }}
         />
       )}
-      {game && live && <Tables game={game} onAct={act} />}
+      {game && live && (
+        <Tables
+          game={game}
+          onKnockOut={(playerId) => act(playerId, "knock-out")}
+          onAddon={(player) => payFor(player, "addon", tournament.addon_price ?? 0)}
+        />
+      )}
       {game && live && game.windows.late_registration && (
         <SignUp
           club={club}
@@ -162,14 +197,16 @@ export default function GamePage({
               [...game.in_game, ...game.out, ...game.waiting].map((entry) => entry.player.id),
             )
           }
-          register={(playerId) =>
-            change(async () => {
-              await registerPlayer(club.id, tournament.id, playerId);
-              return actOnPlayer(club.id, tournament.id, playerId, "seat");
-            })
+          register={(player) =>
+            askToPay(paidFor("buy_in", player), tournament.buy_in, (method) =>
+              change(async () => {
+                await registerPlayer(club.id, tournament.id, player.id);
+                return actOnPlayer(club.id, tournament.id, player.id, "seat", method);
+              }),
+            )
           }
         >
-          <Waiting game={game} onSeat={(playerId) => act(playerId, "seat")} />
+          <Waiting game={game} onSeat={seat} />
         </SignUp>
       )}
       {game?.status === "finished" && (
@@ -183,10 +220,11 @@ export default function GamePage({
       {game && game.out.length > 0 && (
         <Finished
           game={game}
-          onReenter={(playerId) => act(playerId, "reentry")}
+          onReenter={(player) => payFor(player, "reentry", tournament.buy_in)}
           onUndo={(playerId) => act(playerId, "undo-knock-out")}
         />
       )}
+      {paymentDialog}
     </div>
   );
 }
@@ -337,17 +375,19 @@ function MoveSuggestion({ game, onMove }: { game: GameState; onMove: () => void 
 
 function Tables({
   game,
-  onAct,
+  onKnockOut,
+  onAddon,
 }: {
   game: GameState;
-  onAct: (playerId: number, action: PlayerAction) => void;
+  onKnockOut: (playerId: number) => void;
+  onAddon: (player: Player) => void;
 }) {
   const tables = [...new Set(game.in_game.map((s) => s.table))].sort((a, b) => a - b);
   // One table left of a tournament that needed more: the final table.
   const final = tables.length === 1 && game.in_game.length + game.out.length > game.seats_per_table;
 
   function knockOut(seated: SeatedPlayer) {
-    if (window.confirm(`Игрок ${seated.player.name} выбыл?`)) onAct(seated.player.id, "knock-out");
+    if (window.confirm(`Игрок ${seated.player.name} выбыл?`)) onKnockOut(seated.player.id);
   }
 
   return (
@@ -359,7 +399,7 @@ function Tables({
           seats={game.in_game.filter((s) => s.table === table)}
           canAddon={(s) => game.windows.addon && !s.addon_this_entry}
           onKnockOut={knockOut}
-          onAddon={(s) => onAct(s.player.id, "addon")}
+          onAddon={(s) => onAddon(s.player)}
         />
       ))}
     </div>
@@ -421,17 +461,27 @@ function TableCard({
   );
 }
 
-function Waiting({ game, onSeat }: { game: GameState; onSeat: (playerId: number) => void }) {
+function Waiting({
+  game,
+  onSeat,
+}: {
+  game: GameState;
+  onSeat: (registration: Registration) => void;
+}) {
   if (game.waiting.length === 0) return null;
   return (
     <ul
       aria-label="Ждут посадки"
       className="mb-4 divide-y divide-slate-200 rounded-xl border border-slate-200"
     >
-      {game.waiting.map(({ player }) => (
-        <li key={player.id} aria-label={player.name} className="flex items-center gap-3 p-2">
-          <p className="flex-1 font-medium text-slate-900">{player.name}</p>
-          <button type="button" onClick={() => onSeat(player.id)} className={smallButton}>
+      {game.waiting.map((registration) => (
+        <li
+          key={registration.player.id}
+          aria-label={registration.player.name}
+          className="flex items-center gap-3 p-2"
+        >
+          <p className="flex-1 font-medium text-slate-900">{registration.player.name}</p>
+          <button type="button" onClick={() => onSeat(registration)} className={smallButton}>
             Посадить
           </button>
         </li>
@@ -446,7 +496,7 @@ function Finished({
   onUndo,
 }: {
   game: GameState;
-  onReenter: (playerId: number) => void;
+  onReenter: (player: Player) => void;
   /** Takes back a knock-out marked by mistake; not a re-entry. */
   onUndo: (playerId: number) => void;
 }) {
@@ -477,7 +527,7 @@ function Finished({
                 {game.windows.reentry && (
                   <button
                     type="button"
-                    onClick={() => onReenter(player.player.id)}
+                    onClick={() => onReenter(player.player)}
                     className={smallButton}
                   >
                     Re-entry
