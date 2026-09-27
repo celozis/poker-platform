@@ -73,9 +73,11 @@ _Avoid_: "In Progress" (say Running)
 **Knock-out**: A player leaving the game for good (unless they re-enter). The admin marks it; it gives the player their Place. A knock-out marked by mistake can be undone while the tournament is live: the player sits down again, and it is not a re-entry.
 _Avoid_: Bust, elimination (in the admin panel)
 
-**Re-entry**: Player's option to buy back in after a knock-out, taking a new seat. Allowed up to and including a given level ("re-entry until level N"), or not offered at all; as many times as the window allows.
+**Re-entry**: Player's option to buy back in after a knock-out, taking a new seat and a new starting stack. Allowed up to and including a given level ("re-entry until level N"), or not offered at all; as many times as the window allows.
 
-**Add-on**: Player's option to buy extra chips at a fixed point in the tournament: at a given level, or not offered at all. One per entry: a player who re-entered can take it again.
+**Add-on**: Player's option to buy extra chips at a fixed point in the tournament: at a given level, or not offered at all. Gives as many chips as the tournament says (its add-on stack). One per entry: a player who re-entered can take it again.
+
+**Average Stack**: All the chips in play shared among the players still at the tables: a starting stack for every entry (the first one and each re-entry) and the add-on stack for every add-on. A knocked-out player's chips stay in play.
 
 **Late Registration**: Window during which new players can join, and registered players who came late can sit down, in a started tournament: up to and including a given level, or not offered at all.
 
@@ -138,9 +140,12 @@ _Avoid_: Rebalance, reseat
 
 **Dealer Cabinet**: Minimal screen for dealers showing their table, seating, rotation alerts, dispute-raise button.
 
-**Tabletop (Табло)**: Browser-based display (on a TV in the hall) showing current blind level, players in game, average stack. Live-synced.
+**Hall Board (Табло)**: A full-screen page on a TV in the club's hall: the blind level and ante, the countdown, the next level, the players left and re-entries made, the average stack and the time to the next break, in the club's colours with the club's and the league's marks. No player names. Opens without login by the tournament's Board Link; every admin change reaches it in under a second over a WebSocket, and it reconnects by itself (ADR-0007).
+_Avoid_: Tabletop
 
-**WebSocket**: Real-time sync between Admin Panel ↔ Tabletop ↔ Bot. Changes on admin instantly appear everywhere.
+**Board Link**: `/board/<board token>`, the address of a tournament's hall board. The board token (`board_token` in code) is twelve random characters, so the link cannot be guessed from the tournament's number. The admin sees the link on the tournament's running page.
+
+**WebSocket**: Real-time sync from the backend to the Hall Board (later also the bot): after every change the board is sent afresh.
 
 ---
 
@@ -150,17 +155,18 @@ _Avoid_: Rebalance, reseat
 
 - **Backend API** (FastAPI, Python): Manages tournaments, players, ratings, cash. Exposes REST + WebSocket.
 - **Telegram Bot** (aiogram, Python): Primary player entry point.
-- **Web Frontend** (React, TS): Admin Panel, Player Cabinet, Dealer Cabinet, Tabletop.
+- **Web Frontend** (React, TS): Admin Panel, Player Cabinet, Dealer Cabinet, Hall Board (`/board/<board token>`).
 - **Database** (PostgreSQL): Multi-tenant via shared tables with a `club_id` column; access is enforced by the `AdminClub` dependency on every `/api/clubs/{club_id}/...` route (ADR-0003). Accessed via SQLAlchemy 2 with sync sessions (ADR-0002); Alembic migrations run automatically on backend start.
 - **Players**: League-wide `players` (one per phone), each club's list in `club_players`, and `registrations` of a club's players for its tournaments (ADR-0005).
 - **Running a tournament**: the game lives in the tournament row (status, blind clock) and in its registrations (seat, finish order, re-entries, add-ons); the blind clock is worked out from the time, with no background job (ADR-0006).
+- **Realtime**: after committing a change, the backend tells the tournament's watchers "it has changed" (`app/realtime.py`, in-process); each connected hall board reads the board afresh and gets it over its WebSocket. One backend process only for now (ADR-0007).
 - **Integrations**: iiko (cashier), ЮДС (loyalty), Telegram API, VK ID (auth).
 
 **MVP (Phase 1):**
 - Core tournament engine (register, seat, blind timer, results)
 - Telegram bot for players (register, see rating, get reminders)
 - Admin web panel (manage tournament, track cash)
-- Tabletop display (browser-based timer)
+- Hall board (browser-based timer on the hall's TV)
 - 2–3 clubs running live
 
 **Phase 2+:**
@@ -184,7 +190,7 @@ _Avoid_: Rebalance, reseat
 
 5. **No mobile app yet**: Telegram bot + web is the MVP. iOS/Android apps are deferred (Phase 3+).
 
-6. **Realtime is a hard requirement**: Tabletop must show blind level and seating in <1s of admin change. WebSocket mandatory.
+6. **Realtime is a hard requirement**: the Hall Board must show every admin change in <1s. WebSocket mandatory.
 
 ---
 
@@ -198,6 +204,7 @@ docker compose up --build
 ```
 
 - Frontend: http://localhost:5173 (admin login; API and database status in the footer)
+- Hall board: http://localhost:5173/board/<board token>, no login; the admin panel shows the link on a tournament's running page ("Проведение")
 - Backend API: http://localhost:8000 (health check: `/api/health`, docs: `/docs`)
 - PostgreSQL: `localhost:5433`, user/password `poker`/`poker`, databases `poker` (dev) and `poker_test` (tests). Host port 5433 avoids clashing with a locally installed PostgreSQL.
 
@@ -266,5 +273,5 @@ The Telegram bot (aiogram) is not part of the skeleton yet.
 
 ---
 
-**Last updated**: 2026-09-26  
+**Last updated**: 2026-09-27  
 **Owner**: Matt Getsov

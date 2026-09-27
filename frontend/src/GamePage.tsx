@@ -12,15 +12,13 @@ import {
   RejectedError,
   runGame,
   type SeatedPlayer,
-  type StructureItem,
   type Tournament,
 } from "./api";
+import { describe, formatTime, next, useCountdown } from "./blindClock";
 import { startFormat } from "./dates";
 import { SERVER_UNREACHABLE, smallButton } from "./forms";
 import { SignUp } from "./RegistrationsPage";
 import { STATUS_NAMES } from "./tournamentStatus";
-
-const numberFormat = new Intl.NumberFormat("ru-RU");
 
 type Loaded = { game: GameState; receivedAt: number };
 
@@ -50,7 +48,12 @@ export default function GamePage({
   const load = useCallback(() => {
     const thisLoad = ++latestLoad.current;
     fetchGame(club.id, tournament.id)
-      .then((game) => thisLoad === latestLoad.current && setLoaded({ game, receivedAt: Date.now() }))
+      .then((game) => {
+        if (thisLoad !== latestLoad.current) return;
+        setLoaded({ game, receivedAt: Date.now() });
+        // The clock asks again after a failure at a level's end; a later answer clears it.
+        setLoadFailed(false);
+      })
       .catch(() => thisLoad === latestLoad.current && setLoadFailed(true));
   }, [club.id, tournament.id]);
 
@@ -99,6 +102,7 @@ export default function GamePage({
             Назад к списку
           </button>
         </div>
+        <BoardLink token={tournament.board_token} />
       </div>
 
       {error && (
@@ -180,6 +184,23 @@ export default function GamePage({
   );
 }
 
+/** The hall board opens by this link on the club's TV, without login. */
+function BoardLink({ token }: { token: string }) {
+  const path = `/board/${token}`;
+  return (
+    <p className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-slate-600">
+      <span>Табло для зала:</span>
+      <code className="select-all rounded bg-slate-100 px-2 py-0.5 text-slate-800">
+        {window.location.origin}
+        {path}
+      </code>
+      <a href={path} target="_blank" rel="noreferrer" className={smallButton}>
+        Открыть табло
+      </a>
+    </p>
+  );
+}
+
 function StartPanel({
   game,
   primaryColor,
@@ -213,49 +234,6 @@ function StartPanel({
   );
 }
 
-/** "Уровень 2" and "200 / 400, анте 50", or "Перерыв" with no blinds. */
-function describe(structure: StructureItem[], index: number): { name: string; blinds: string } {
-  const item = structure[index];
-  if (item.kind === "break") return { name: "Перерыв", blinds: "" };
-  const level = structure.slice(0, index + 1).filter((i) => i.kind === "level").length;
-  const blinds = `${numberFormat.format(item.small_blind)} / ${numberFormat.format(item.big_blind)}`;
-  return {
-    name: `Уровень ${level}`,
-    blinds: item.ante > 0 ? `${blinds}, анте ${numberFormat.format(item.ante)}` : blinds,
-  };
-}
-
-function next(structure: StructureItem[], index: number): string {
-  if (index + 1 >= structure.length) return "Последний уровень структуры";
-  const item = structure[index + 1];
-  if (item.kind === "break") return `Дальше: перерыв ${item.duration_minutes} мин`;
-  const { name, blinds } = describe(structure, index + 1);
-  return `Дальше: ${name.toLowerCase()} · ${blinds}`;
-}
-
-const pad = (value: number) => String(value).padStart(2, "0");
-
-function formatTime(seconds: number): string {
-  const hours = Math.floor(seconds / 3600);
-  const minutes = Math.floor((seconds % 3600) / 60);
-  const clock = `${pad(minutes)}:${pad(seconds % 60)}`;
-  return hours > 0 ? `${hours}:${clock}` : clock;
-}
-
-/** Seconds left on the level, counted down in the browser from what the server said. */
-function useSecondsLeft(game: GameState, receivedAt: number): number {
-  const [now, setNow] = useState(() => Date.now());
-  const clock = game.clock!;
-  useEffect(() => {
-    setNow(Date.now());
-    if (!clock.running) return;
-    const timer = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(timer);
-  }, [clock.running, receivedAt]);
-  if (!clock.running) return clock.seconds_left;
-  return Math.max(0, clock.seconds_left - Math.floor((now - receivedAt) / 1000));
-}
-
 function ClockPanel({
   tournament,
   game,
@@ -272,14 +250,8 @@ function ClockPanel({
 }) {
   const clock = game.clock!;
   const { structure } = tournament;
-  const secondsLeft = useSecondsLeft(game, receivedAt);
+  const secondsLeft = useCountdown(structure, clock, receivedAt, onLevelOver);
   const headingId = useId();
-  const isLast = clock.item >= structure.length - 1;
-  const levelOver = clock.running && clock.seconds_left > 0 && secondsLeft === 0 && !isLast;
-
-  useEffect(() => {
-    if (levelOver) onLevelOver();
-  }, [levelOver, onLevelOver]);
 
   const { name, blinds } = describe(structure, clock.item);
   const hints = [

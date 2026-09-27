@@ -61,13 +61,13 @@ def client() -> Iterator[TestClient]:
 
 @pytest.fixture
 def clock() -> Iterator[FakeClock]:
-    from app.auth import get_now
+    from app.auth import get_clock
     from app.main import app
 
     fake = FakeClock()
-    app.dependency_overrides[get_now] = fake
+    app.dependency_overrides[get_clock] = lambda: fake
     yield fake
-    del app.dependency_overrides[get_now]
+    del app.dependency_overrides[get_clock]
 
 
 @pytest.fixture

@@ -34,6 +34,8 @@ export type TournamentInput = {
   structure: StructureItem[];
   reentry_until_level: number | null;
   addon_at_level: number | null;
+  /** Chips an add-on gives; needed only when the add-on is offered. */
+  addon_stack: number | null;
   late_registration_until_level: number | null;
   seats_per_table: number;
 };
@@ -41,7 +43,12 @@ export type TournamentInput = {
 /** scheduled → running ⇄ paused → finished; or scheduled → cancelled. */
 export type TournamentStatus = "scheduled" | "running" | "paused" | "finished" | "cancelled";
 
-export type Tournament = TournamentInput & { id: number; status: TournamentStatus };
+/** `board_token`: the secret part of the hall board's link, /board/<board_token>. */
+export type Tournament = TournamentInput & {
+  id: number;
+  status: TournamentStatus;
+  board_token: string;
+};
 
 /** live: running or paused; upcoming: not started yet, however late. */
 export type TournamentList = { live: Tournament[]; upcoming: Tournament[]; past: Tournament[] };
@@ -243,6 +250,7 @@ export type Clock = {
   running: boolean;
   /** The structure item (level or break) being played: an index into the tournament's structure. */
   item: number;
+  /** To the millisecond, so that every screen's countdown turns over together. */
   seconds_left: number;
 };
 
@@ -322,4 +330,37 @@ export async function movePlayer(
 ): Promise<GameState> {
   const url = `${tournamentUrl(clubId, tournamentId)}/players/${playerId}/move`;
   return accepted(await postJson(url, to));
+}
+
+/** A tournament as the hall board shows it to everyone in the club: no player names. */
+export type BoardState = {
+  club: Club;
+  name: string;
+  starts_at: string;
+  status: TournamentStatus;
+  starting_stack: number;
+  structure: StructureItem[];
+  /** null until the tournament starts. */
+  clock: Clock | null;
+  /** Still at the tables. */
+  players_left: number;
+  /** Everyone who has sat down at a table, counted once however many times they re-entered. */
+  players: number;
+  reentries: number;
+  /** null while nobody is at a table. */
+  average_stack: number | null;
+};
+
+/** The hall board, opened by its secret link without login; null when there is no such board. */
+export async function fetchBoard(token: string): Promise<BoardState | null> {
+  const response = await fetch(`/api/board/${token}`);
+  if (response.status === 404) return null;
+  if (!response.ok) throw failed(response);
+  return response.json();
+}
+
+/** Where the hall board hears of every change: the board on connecting, then after each change. */
+export function boardSocketUrl(token: string): string {
+  const scheme = window.location.protocol === "https:" ? "wss" : "ws";
+  return `${scheme}://${window.location.host}/api/board/${token}/ws`;
 }

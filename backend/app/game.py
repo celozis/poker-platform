@@ -10,7 +10,6 @@ app/entry_windows.py."""
 
 from dataclasses import asdict
 from datetime import datetime, timedelta
-from math import ceil
 from random import Random
 from typing import Annotated, cast
 
@@ -19,6 +18,7 @@ from pydantic import TypeAdapter
 from sqlalchemy import select
 from sqlalchemy.orm import contains_eager
 
+from app import realtime
 from app.auth import DbSession, Now
 from app.blind_clock import BlindClock
 from app.clubs import AdminClub
@@ -59,12 +59,12 @@ Rng = Annotated[Random, Depends(get_random)]
 _STRUCTURE = TypeAdapter(list[StructureItem])
 
 
-def _structure(tournament: Tournament) -> list[StructureItem]:
+def structure_of(tournament: Tournament) -> list[StructureItem]:
     return _STRUCTURE.validate_python(tournament.structure)
 
 
 def _durations(tournament: Tournament) -> list[timedelta]:
-    return [timedelta(minutes=item.duration_minutes) for item in _structure(tournament)]
+    return [timedelta(minutes=item.duration_minutes) for item in structure_of(tournament)]
 
 
 def _clock(tournament: Tournament) -> BlindClock | None:
@@ -121,7 +121,7 @@ def current_windows(tournament: Tournament, now: datetime) -> EntryWindows:
     if clock is None or not tournament.is_live:
         return EntryWindows(reentry=False, addon=False, late_registration=False)
     return entry_windows(
-        _structure(tournament),
+        structure_of(tournament),
         clock.at(now).item,
         reentry_until_level=tournament.reentry_until_level,
         addon_at_level=tournament.addon_at_level,
@@ -139,18 +139,22 @@ def late_registration_closed_because(tournament: Tournament, now: datetime) -> s
     return None
 
 
+def clock_out(tournament: Tournament, now: datetime) -> ClockOut | None:
+    """The blind clock as the admin panel and the hall board show it; None until the start."""
+    clock = _clock(tournament)
+    if clock is None:
+        return None
+    clock = clock.at(now)
+    return ClockOut(
+        running=clock.running,
+        item=clock.item,
+        seconds_left=round(clock.time_left(now).total_seconds(), 3),
+    )
+
+
 def _state(session: DbSession, tournament: Tournament, now: datetime) -> GameState:
     registrations = _registrations(session, tournament)
     by_player = {r.player_id: r for r in registrations}
-    clock = _clock(tournament)
-    clock_out = None
-    if clock is not None:
-        clock = clock.at(now)
-        clock_out = ClockOut(
-            running=clock.running,
-            item=clock.item,
-            seconds_left=ceil(clock.time_left(now).total_seconds()),
-        )
     windows = current_windows(tournament, now)
     seating = _seating(registrations)
     places = _places(registrations)
@@ -158,7 +162,7 @@ def _state(session: DbSession, tournament: Tournament, now: datetime) -> GameSta
     return GameState(
         status=cast(TournamentStatus, tournament.status),
         seats_per_table=tournament.seats_per_table,
-        clock=clock_out,
+        clock=clock_out(tournament, now),
         windows=EntryWindowsOut(**asdict(windows)),
         in_game=[
             SeatedPlayer(
@@ -197,6 +201,13 @@ def _state(session: DbSession, tournament: Tournament, now: datetime) -> GameSta
     )
 
 
+def _saved(session: DbSession, tournament: Tournament, now: datetime) -> GameState:
+    """Commits the change, tells the hall board of it and answers with the game."""
+    session.commit()
+    realtime.tournament_changed(tournament.id)
+    return _state(session, tournament, now)
+
+
 def _refuse(message: str) -> HTTPException:
     return HTTPException(status.HTTP_409_CONFLICT, message)
 
@@ -226,8 +237,7 @@ def start(
     tournament.status = "running"
     tournament.started_at = now
     _set_clock(tournament, BlindClock.started(_durations(tournament), now))
-    session.commit()
-    return _state(session, tournament, now)
+    return _saved(session, tournament, now)
 
 
 def _live_tournament(session: DbSession, club: Club, tournament_id: int) -> Tournament:
@@ -253,8 +263,7 @@ def pause(tournament_id: int, club: AdminClub, session: DbSession, now: Now) -> 
         raise _refuse("Турнир уже на паузе")
     _set_clock(tournament, _live_clock(tournament).paused(now))
     tournament.status = "paused"
-    session.commit()
-    return _state(session, tournament, now)
+    return _saved(session, tournament, now)
 
 
 @router.post("/resume")
@@ -264,8 +273,7 @@ def resume(tournament_id: int, club: AdminClub, session: DbSession, now: Now) ->
         raise _refuse("Турнир не на паузе")
     _set_clock(tournament, _live_clock(tournament).resumed(now))
     tournament.status = "running"
-    session.commit()
-    return _state(session, tournament, now)
+    return _saved(session, tournament, now)
 
 
 def _switch_level(
@@ -276,8 +284,7 @@ def _switch_level(
     if not clock.can_move(step, now):
         raise _refuse("Это последний уровень структуры" if step > 0 else "Это первый уровень структуры")
     _set_clock(tournament, clock.moved(step, now))
-    session.commit()
-    return _state(session, tournament, now)
+    return _saved(session, tournament, now)
 
 
 @router.post("/next-level")
@@ -347,8 +354,7 @@ def knock_out(
         if final is not None:
             for r in left:
                 _sit(r, final[r.player_id])
-    session.commit()
-    return _state(session, tournament, now)
+    return _saved(session, tournament, now)
 
 
 @router.post("/players/{player_id}/undo-knock-out")
@@ -364,8 +370,7 @@ def undo_knock_out(
     _require_out(registration)
     registration.finish_order = None
     _sit(registration, seat_for_newcomer(_seating(registrations), tournament.seats_per_table, rng))
-    session.commit()
-    return _state(session, tournament, now)
+    return _saved(session, tournament, now)
 
 
 @router.post("/players/{player_id}/reentry")
@@ -385,8 +390,7 @@ def reentry(
     registration.reentries += 1
     registration.addon_this_entry = False
     _sit(registration, seat_for_newcomer(_seating(registrations), tournament.seats_per_table, rng))
-    session.commit()
-    return _state(session, tournament, now)
+    return _saved(session, tournament, now)
 
 
 @router.post("/players/{player_id}/addon")
@@ -405,8 +409,7 @@ def addon(
         raise _refuse(f"Игрок {registration.player.name} уже взял add-on")
     registration.addons += 1
     registration.addon_this_entry = True
-    session.commit()
-    return _state(session, tournament, now)
+    return _saved(session, tournament, now)
 
 
 @router.post("/players/{player_id}/seat")
@@ -426,8 +429,7 @@ def seat_late_player(
         raise _refuse(closed)
     registration.checked_in_at = registration.checked_in_at or now
     _sit(registration, seat_for_newcomer(_seating(registrations), tournament.seats_per_table, rng))
-    session.commit()
-    return _state(session, tournament, now)
+    return _saved(session, tournament, now)
 
 
 @router.post("/players/{player_id}/move")
@@ -454,5 +456,4 @@ def move_player(
     if target in seating.values():
         raise _refuse(f"Стол {target.table}, место {target.seat} занято")
     _sit(registration, target)
-    session.commit()
-    return _state(session, tournament, now)
+    return _saved(session, tournament, now)

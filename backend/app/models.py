@@ -1,3 +1,4 @@
+import secrets
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -66,8 +67,15 @@ class Tournament(Base):
     structure: Mapped[list[dict[str, Any]]] = mapped_column(JSONB)
     reentry_until_level: Mapped[int | None]
     addon_at_level: Mapped[int | None]
+    # Chips an add-on gives; None when the add-on is not offered.
+    addon_stack: Mapped[int | None]
     late_registration_until_level: Mapped[int | None]
     seats_per_table: Mapped[int] = mapped_column(default=9)
+    # The secret part of the hall board's link (/board/<token>): the board opens without login,
+    # so its link must not be guessable from the tournament's number (ADR-0007).
+    board_token: Mapped[str] = mapped_column(
+        String(12), unique=True, default=lambda: secrets.token_hex(6)
+    )
     # scheduled → running ⇄ paused → finished; or scheduled → cancelled.
     status: Mapped[str] = mapped_column(String(20), default="scheduled")
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

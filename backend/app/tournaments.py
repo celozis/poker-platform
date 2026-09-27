@@ -2,10 +2,12 @@
 the club comes only from AdminClub, and every query filters by club.id."""
 
 from datetime import datetime
+from typing import Any
 
 from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import select
 
+from app import realtime
 from app.auth import DbSession, Now
 from app.clubs import AdminClub
 from app.models import Club, Tournament
@@ -29,10 +31,16 @@ def club_tournament(
     return tournament
 
 
-def _check_rules(tournament: TournamentIn, now: datetime) -> None:
+def _checked(tournament: TournamentIn, now: datetime) -> dict[str, Any]:
+    """The tournament's fields to save, once it follows the rules. An add-on that is not offered
+    gives no chips, whatever the form sent."""
     errors = tournament_errors(tournament, now)
     if errors:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, errors)
+    fields = tournament.model_dump()
+    if tournament.addon_at_level is None:
+        fields["addon_stack"] = None
+    return fields
 
 
 def _section(tournament: Tournament, now: datetime) -> str:
@@ -61,8 +69,7 @@ def list_tournaments(club: AdminClub, session: DbSession, now: Now) -> Tournamen
 def create_tournament(
     body: TournamentIn, club: AdminClub, session: DbSession, now: Now
 ) -> TournamentOut:
-    _check_rules(body, now)
-    tournament = Tournament(club_id=club.id, status="scheduled", **body.model_dump())
+    tournament = Tournament(club_id=club.id, status="scheduled", **_checked(body, now))
     session.add(tournament)
     session.commit()
     return TournamentOut.model_validate(tournament)
@@ -77,10 +84,10 @@ def update_tournament(
         raise HTTPException(status.HTTP_409_CONFLICT, "Турнир уже начался, его нельзя изменить")
     if tournament.status == "cancelled":
         raise HTTPException(status.HTTP_409_CONFLICT, "Турнир отменён, его нельзя изменить")
-    _check_rules(body, now)
-    for field, value in body.model_dump().items():
+    for field, value in _checked(body, now).items():
         setattr(tournament, field, value)
     session.commit()
+    realtime.tournament_changed(tournament.id)
     return TournamentOut.model_validate(tournament)
 
 
@@ -93,4 +100,5 @@ def cancel_tournament(
         raise HTTPException(status.HTTP_409_CONFLICT, "Турнир уже начался, его нельзя отменить")
     tournament.status = "cancelled"
     session.commit()
+    realtime.tournament_changed(tournament.id)
     return TournamentOut.model_validate(tournament)

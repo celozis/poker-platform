@@ -63,6 +63,8 @@ class TournamentIn(BaseModel):
     # Play level numbers (breaks are not counted); None means the option is not offered.
     reentry_until_level: int | None = None
     addon_at_level: int | None = None
+    # How many chips an add-on gives; needed only when the add-on is offered.
+    addon_stack: int | None = None
     late_registration_until_level: int | None = None
     seats_per_table: int = 9
 
@@ -81,6 +83,8 @@ class TournamentOut(TournamentIn):
     id: int
     starts_at: Annotated[AwareDatetime, AfterValidator(_in_utc)]
     status: TournamentStatus
+    # The secret part of the hall board's link, /board/<board_token>.
+    board_token: str
 
 
 class TournamentList(BaseModel):
@@ -145,7 +149,9 @@ class ClockOut(BaseModel):
     running: bool
     # The structure item (level or break) being played: an index into the tournament's structure.
     item: int
-    seconds_left: int
+    # To the millisecond: the admin panel and the hall board count down from the same moment,
+    # so their timers turn over together (ADR-0007).
+    seconds_left: float
 
 
 class EntryWindowsOut(BaseModel):
@@ -200,3 +206,23 @@ class GameState(BaseModel):
 class MoveIn(BaseModel):
     table: int
     seat: int
+
+
+class BoardState(BaseModel):
+    """A tournament as the hall board shows it to everyone in the club: no player names."""
+
+    club: ClubOut
+    name: str
+    starts_at: Annotated[AwareDatetime, AfterValidator(_in_utc)]
+    status: TournamentStatus
+    starting_stack: int
+    structure: list[StructureItem]
+    # None until the tournament starts.
+    clock: ClockOut | None
+    # Still at the tables.
+    players_left: int
+    # Everyone who has sat down at a table, counted once however many times they re-entered.
+    players: int
+    reentries: int
+    # All the chips in play shared among the players left; None while nobody is at a table.
+    average_stack: int | None

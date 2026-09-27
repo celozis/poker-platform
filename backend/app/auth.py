@@ -5,6 +5,7 @@ import hmac
 import logging
 import re
 import secrets
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any
 
@@ -29,8 +30,21 @@ SESSION_COOKIE = "admin_session"
 SESSION_COOKIE_SCOPE: dict[str, Any] = {"path": "/api", "httponly": True, "samesite": "strict"}
 
 
-def get_now() -> datetime:
+def _utc_now() -> datetime:
     return datetime.now(UTC)
+
+
+def get_clock() -> Callable[[], datetime]:
+    """What tells the time; tests put a fake clock here. A request asks it once (Now), a hall
+    board's connection every time it sends the board (app/board.py)."""
+    return _utc_now
+
+
+Clock = Annotated[Callable[[], datetime], Depends(get_clock)]
+
+
+def get_now(clock: Clock) -> datetime:
+    return clock()
 
 
 DbSession = Annotated[Session, Depends(get_session)]

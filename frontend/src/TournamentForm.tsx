@@ -26,8 +26,9 @@ function fromLocalInput(value: string): string {
   return Number.isNaN(date.getTime()) ? value : date.toISOString();
 }
 
-const optionalLevel = (value: string) => (value.trim() === "" ? null : Number(value));
-const levelText = (level: number | null) => (level === null ? "" : String(level));
+// An empty field means the option is not offered.
+const optionalNumber = (value: string) => (value.trim() === "" ? null : Number(value));
+const numberText = (value: number | null) => (value === null ? "" : String(value));
 
 type Fields = {
   name: string;
@@ -36,6 +37,7 @@ type Fields = {
   startingStack: string;
   reentryUntilLevel: string;
   addonAtLevel: string;
+  addonStack: string;
   lateRegistrationUntilLevel: string;
   seatsPerTable: string;
 };
@@ -46,9 +48,10 @@ function initialFields(tournament?: Tournament): Fields {
     startsAt: tournament ? toLocalInput(tournament.starts_at) : "",
     buyIn: tournament ? String(tournament.buy_in) : "",
     startingStack: tournament ? String(tournament.starting_stack) : "",
-    reentryUntilLevel: levelText(tournament?.reentry_until_level ?? null),
-    addonAtLevel: levelText(tournament?.addon_at_level ?? null),
-    lateRegistrationUntilLevel: levelText(tournament?.late_registration_until_level ?? null),
+    reentryUntilLevel: numberText(tournament?.reentry_until_level ?? null),
+    addonAtLevel: numberText(tournament?.addon_at_level ?? null),
+    addonStack: numberText(tournament?.addon_stack ?? null),
+    lateRegistrationUntilLevel: numberText(tournament?.late_registration_until_level ?? null),
     seatsPerTable: String(tournament?.seats_per_table ?? 9),
   };
 }
@@ -109,9 +112,10 @@ export default function TournamentForm({
         buy_in: Number(fields.buyIn),
         starting_stack: Number(fields.startingStack),
         structure: fromRows(rows),
-        reentry_until_level: optionalLevel(fields.reentryUntilLevel),
-        addon_at_level: optionalLevel(fields.addonAtLevel),
-        late_registration_until_level: optionalLevel(fields.lateRegistrationUntilLevel),
+        reentry_until_level: optionalNumber(fields.reentryUntilLevel),
+        addon_at_level: optionalNumber(fields.addonAtLevel),
+        addon_stack: optionalNumber(fields.addonStack),
+        late_registration_until_level: optionalNumber(fields.lateRegistrationUntilLevel),
         seats_per_table: Number(fields.seatsPerTable),
       });
     } catch (error) {
@@ -209,7 +213,7 @@ export default function TournamentForm({
           Номера уровней считаются без перерывов. Оставьте поле пустым, если опция не
           разрешена.
         </p>
-        <div className="grid gap-4 sm:grid-cols-3">
+        <div className="grid gap-4 sm:grid-cols-2">
           <label className={labelClass}>
             Re-entry до уровня
             <input
@@ -227,6 +231,16 @@ export default function TournamentForm({
               min={1}
               value={fields.addonAtLevel}
               onChange={changeHandler("addonAtLevel")}
+              className={inputClass}
+            />
+          </label>
+          <label className={labelClass}>
+            Фишек за add-on
+            <input
+              type="number"
+              min={1}
+              value={fields.addonStack}
+              onChange={changeHandler("addonStack")}
               className={inputClass}
             />
           </label>

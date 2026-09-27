@@ -8,7 +8,7 @@ from datetime import datetime
 from app.schemas import BlindLevel, TournamentIn
 
 MAX_NAME_LENGTH = 200  # models.Tournament.name
-MAX_AMOUNT = 2_147_483_647  # PostgreSQL integer, the type of buy_in and starting_stack
+MAX_AMOUNT = 2_147_483_647  # PostgreSQL integer, the type of buy_in and the stacks
 MIN_SEATS, MAX_SEATS = 2, 10  # seats per table: from heads-up to a full ten-seat table
 
 
@@ -28,6 +28,11 @@ def _field_errors(tournament: TournamentIn, now: datetime) -> list[str]:
         errors.append("Стартовый стек должен быть больше нуля")
     if tournament.starting_stack > MAX_AMOUNT:
         errors.append("Стартовый стек слишком большой")
+    if tournament.addon_at_level is not None:
+        if tournament.addon_stack is None or tournament.addon_stack <= 0:
+            errors.append("Add-on: укажите, сколько фишек он даёт")
+        elif tournament.addon_stack > MAX_AMOUNT:
+            errors.append("Фишек за add-on слишком много")
     if not MIN_SEATS <= tournament.seats_per_table <= MAX_SEATS:
         errors.append(f"Мест за столом: от {MIN_SEATS} до {MAX_SEATS}")
     return errors

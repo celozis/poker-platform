@@ -14,4 +14,5 @@ EXPOSE 8000
 
 # Migrations are applied on every start, before the API accepts requests.
 # UVICORN_EXTRA_ARGS lets docker-compose add dev-only flags such as --reload.
+# One process only (no --workers): the hall board's live updates live in its memory (ADR-0007).
 CMD ["sh", "-c", "alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port 8000 $UVICORN_EXTRA_ARGS"]

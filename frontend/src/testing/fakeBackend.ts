@@ -1,6 +1,7 @@
 import { vi } from "vitest";
 import type {
   BlindTemplate,
+  BoardState,
   GameState,
   Player,
   Registration,
@@ -53,9 +54,11 @@ export function aTournament(overrides: Partial<Tournament> = {}): Tournament {
     structure: TEMPLATES[0].structure,
     reentry_until_level: 2,
     addon_at_level: 2,
+    addon_stack: 30000,
     late_registration_until_level: 3,
     seats_per_table: 9,
     status: "scheduled",
+    board_token: "3f9a1c2b7d4e",
     ...overrides,
   };
 }
@@ -111,6 +114,8 @@ type FakeBackendOptions = {
   checkInOpen?: boolean;
   /** Games by tournament id; a tournament without one has not started. */
   games?: Record<number, GameState>;
+  /** Hall boards by their secret code. */
+  boards?: Record<string, BoardState>;
 };
 
 const CONSENT_MISSING = "Без согласия на обработку персональных данных игрока завести нельзя";
@@ -143,6 +148,7 @@ export function fakeBackend({
   dropOutOpen = registrationOpen,
   checkInOpen = true,
   games = {},
+  boards = {},
 }: FakeBackendOptions = {}) {
   let session = loggedIn;
   const state: TournamentList = { live: [], ...structuredClone(tournaments) };
@@ -332,6 +338,10 @@ export function fakeBackend({
     if (method === "GET" && pathname === clubPlayersUrl) {
       const query = (searchParams.get("q") ?? "").trim();
       return json(clubPlayers.filter((p) => !query || matches(p, query)).sort(byName));
+    }
+    const [, boardToken] = url.match(/^\/api\/board\/(\w+)$/) ?? [];
+    if (method === "GET" && boardToken) {
+      return boards[boardToken] ? json(boards[boardToken]) : json({ detail: "Табло не найдено" }, 404);
     }
     const registrationsMatch = url.match(/^\/api\/clubs\/\d+\/tournaments\/(\d+)\/registrations(.*)$/);
     if (registrationsMatch) {

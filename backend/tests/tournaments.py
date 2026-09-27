@@ -28,5 +28,6 @@ def a_tournament(**overrides: Any) -> dict[str, Any]:
         "structure": [a_level(100, 200), a_level(200, 400), a_break(), a_level(300, 600, ante=75)],
         "reentry_until_level": 2,
         "addon_at_level": 2,
+        "addon_stack": 30000,
         "late_registration_until_level": 3,
     } | overrides

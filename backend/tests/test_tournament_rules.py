@@ -22,6 +22,17 @@ def test_addon_level_must_be_within_the_structure() -> None:
     assert errors(addon_at_level=4) == ["Add-on: уровня 4 нет в структуре, в ней уровни с 1 по 3"]
 
 
+def test_an_addon_says_how_many_chips_it_gives() -> None:
+    no_chips = ["Add-on: укажите, сколько фишек он даёт"]
+    assert errors(addon_stack=None) == no_chips
+    assert errors(addon_stack=0) == no_chips
+    assert errors(addon_stack=3_000_000_000) == ["Фишек за add-on слишком много"]
+
+
+def test_an_addon_that_is_not_offered_needs_no_chips() -> None:
+    assert errors(addon_at_level=None, addon_stack=None) == []
+
+
 def test_reentry_and_late_registration_levels_must_be_within_the_structure() -> None:
     assert errors(reentry_until_level=0) == [
         "Re-entry: уровня 0 нет в структуре, в ней уровни с 1 по 3"

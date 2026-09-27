@@ -235,6 +235,30 @@ def test_tables_seat_nine_unless_the_admin_says_otherwise(client: TestClient, cl
         assert refused.json() == {"detail": ["Мест за столом: от 2 до 10"]}
 
 
+def test_an_addon_keeps_its_chips_and_a_tournament_without_one_has_none(
+    client: TestClient, club: Club
+) -> None:
+    url = f"/api/clubs/{club.id}/tournaments"
+
+    with_addon = client.post(url, json=a_tournament(addon_at_level=2, addon_stack=25000))
+    without = client.post(url, json=a_tournament(addon_at_level=None, addon_stack=25000))
+
+    assert with_addon.json()["addon_stack"] == 25000
+    assert without.json()["addon_stack"] is None
+
+
+def test_every_tournament_has_its_own_secret_board_code(client: TestClient, club: Club) -> None:
+    url = f"/api/clubs/{club.id}/tournaments"
+
+    first = client.post(url, json=a_tournament()).json()
+    second = client.post(url, json=a_tournament()).json()
+
+    assert len(first["board_token"]) == 12
+    assert first["board_token"] != second["board_token"]
+    edited = client.put(f"{url}/{first['id']}", json=a_tournament(name="Другое имя")).json()
+    assert edited["board_token"] == first["board_token"]
+
+
 def test_invalid_changes_are_rejected_and_the_tournament_stays_as_it_was(
     client: TestClient, club: Club
 ) -> None:

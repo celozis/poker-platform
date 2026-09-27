@@ -92,6 +92,7 @@ describe("club tournaments", () => {
     await user.click(screen.getByRole("button", { name: "Добавить перерыв после уровня 2" }));
     await user.type(screen.getByLabelText("Re-entry до уровня"), "2");
     await user.type(screen.getByLabelText("Add-on на уровне"), "2");
+    await user.type(screen.getByLabelText("Фишек за add-on"), "30000");
     const seats = screen.getByLabelText("Мест за столом");
     expect(seats).toHaveValue(9);
     await user.clear(seats);
@@ -114,6 +115,7 @@ describe("club tournaments", () => {
       ],
       reentry_until_level: 2,
       addon_at_level: 2,
+      addon_stack: 30000,
       late_registration_until_level: null,
       seats_per_table: 8,
     });
@@ -164,6 +166,7 @@ describe("club tournaments", () => {
     expect(screen.getByLabelText("Начало")).toHaveValue("2026-10-02T19:00");
     expect(screen.getByLabelText("Уровень 3: анте")).toHaveValue(75);
     expect(screen.getByLabelText("Поздняя регистрация до уровня")).toHaveValue(3);
+    expect(screen.getByLabelText("Фишек за add-on")).toHaveValue(30000);
     const buyIn = screen.getByLabelText("Бай-ин, ₽");
     await user.clear(buyIn);
     await user.type(buyIn, "1500");
@@ -176,6 +179,7 @@ describe("club tournaments", () => {
       ...aTournament(),
       id: undefined,
       status: undefined,
+      board_token: undefined,
       name: "Пятничный турнир",
       starts_at: "2026-10-02T12:00:00.000Z",
       buy_in: 1500,

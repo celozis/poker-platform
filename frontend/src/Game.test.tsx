@@ -75,6 +75,15 @@ describe("running a tournament", () => {
     expect(screen.queryByRole("button", { name: "Начать турнир" })).not.toBeInTheDocument();
   });
 
+  it("gives the link of the hall board, which opens without login", async () => {
+    await openGame(aGame());
+
+    const link = await screen.findByRole("link", { name: "Открыть табло" });
+    expect(link).toHaveAttribute("href", "/board/3f9a1c2b7d4e");
+    expect(link).toHaveAttribute("target", "_blank");
+    expect(screen.getByText("http://localhost:3000/board/3f9a1c2b7d4e")).toBeInTheDocument();
+  });
+
   it("explains why the tournament did not start", async () => {
     const { user } = await openGame(aGame({ waiting: [{ player: IVAN, status: "checked_in" }] }));
 
