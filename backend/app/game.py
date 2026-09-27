@@ -24,6 +24,7 @@ from app.blind_clock import BlindClock
 from app.clubs import AdminClub
 from app.entry_windows import EntryWindows, entry_windows
 from app.models import Club, Player, Registration, Tournament
+from app.results import rank
 from app.schemas import (
     ClockOut,
     EntryWindowsOut,
@@ -107,7 +108,10 @@ def _seating(registrations: list[Registration]) -> Seating:
 def _places(registrations: list[Registration]) -> dict[int, int]:
     """Place by player for those who have finished. Whoever finishes later places higher, so a
     player's place is the number of players in the tournament minus those who finished before
-    them. A re-entry or a late registration after a knock-out moves that player's place down."""
+    them. A re-entry or a late registration after a knock-out moves that player's place down.
+    Once the tournament is finished its places are fixed, and the admin may have corrected them."""
+    if any(r.place is not None for r in registrations):
+        return {r.player_id: r.place for r in registrations if r.place is not None}
     played = [r for r in registrations if r.table_number is not None or r.finish_order is not None]
     finished = sorted(
         (r for r in played if r.finish_order is not None), key=lambda r: r.finish_order or 0
@@ -181,6 +185,7 @@ def _state(session: DbSession, tournament: Tournament, now: datetime) -> GameSta
                 place=place,
                 reentries=by_player[player_id].reentries,
                 addons=by_player[player_id].addons,
+                points=by_player[player_id].points,
             )
             for player_id, place in sorted(places.items(), key=lambda item: item[1])
         ],
@@ -335,8 +340,9 @@ def _finish(registration: Registration, registrations: list[Registration]) -> No
 def knock_out(
     tournament_id: int, player_id: int, club: AdminClub, session: DbSession, now: Now, rng: Rng
 ) -> GameState:
-    """Knocks the player out. The last player standing wins and the tournament is finished;
-    once the players left fit at one table, they are drawn for the final table."""
+    """Knocks the player out. The last player standing wins and the tournament is finished, which
+    fixes everyone's place and rating points; once the players left fit at one table, they are
+    drawn for the final table."""
     tournament = _live_tournament(session, club, tournament_id)
     registrations = _registrations(session, tournament)
     registration = _registered(registrations, player_id)
@@ -349,6 +355,9 @@ def knock_out(
         _set_clock(tournament, clock.paused(now) if clock.running else clock)
         tournament.status = "finished"
         tournament.finished_at = now
+        places = _places(registrations)
+        played = [r for r in registrations if r.player_id in places]
+        rank(sorted(played, key=lambda r: places[r.player_id]))
     else:
         final = final_table_seating(_seating(registrations), tournament.seats_per_table, rng)
         if final is not None:

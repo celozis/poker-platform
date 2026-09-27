@@ -266,7 +266,14 @@ export type SeatedPlayer = {
   addon_this_entry: boolean;
 };
 
-export type FinishedPlayer = { player: Player; place: number; reentries: number; addons: number };
+/** `points`: rating points, once the tournament is finished. */
+export type FinishedPlayer = {
+  player: Player;
+  place: number;
+  reentries: number;
+  addons: number;
+  points: number | null;
+};
 
 export type Move = {
   player: Player;
@@ -363,4 +370,55 @@ export async function fetchBoard(token: string): Promise<BoardState | null> {
 export function boardSocketUrl(token: string): string {
   const scheme = window.location.protocol === "https:" ? "wss" : "ws";
   return `${scheme}://${window.location.host}/api/board/${token}/ws`;
+}
+
+/** A player's result in a finished tournament. */
+export type TournamentResult = {
+  place: number;
+  player: Player;
+  points: number;
+  reentries: number;
+  addons: number;
+};
+
+/** `results`: by place, the winner first; empty until the tournament is finished. */
+export type TournamentResults = { status: TournamentStatus; results: TournamentResult[] };
+
+export async function fetchResults(clubId: number, tournamentId: number): Promise<TournamentResults> {
+  const response = await fetch(`${tournamentUrl(clubId, tournamentId)}/results`);
+  if (!response.ok) throw failed(response);
+  return response.json();
+}
+
+/** Puts the player on the place they really finished in; everyone's points are counted again. */
+export async function correctPlace(
+  clubId: number,
+  tournamentId: number,
+  playerId: number,
+  place: number,
+): Promise<TournamentResults> {
+  const url = `${tournamentUrl(clubId, tournamentId)}/results/${playerId}`;
+  return accepted(await sendJson("PUT", url, { place }));
+}
+
+/** A rating season: a half of the year. `id` such as "2026-2"; days as "2026-07-01". */
+export type Season = { id: string; name: string; first_day: string; last_day: string };
+
+/** Equal points share a position. `tournaments`: finished ones played this season. */
+export type RatingRow = { position: number; player: Player; points: number; tournaments: number };
+
+/** `next_season` is null for the current season: the rating looks back, not ahead. */
+export type ClubRating = {
+  season: Season;
+  previous_season: string;
+  next_season: string | null;
+  players: RatingRow[];
+};
+
+/** The club rating of the current season, or of an earlier one by its id. */
+export async function fetchRating(clubId: number, season?: string): Promise<ClubRating> {
+  const query = season ? `?${new URLSearchParams({ season })}` : "";
+  const response = await fetch(`/api/clubs/${clubId}/rating${query}`);
+  if (!response.ok) throw failed(response);
+  return response.json();
 }

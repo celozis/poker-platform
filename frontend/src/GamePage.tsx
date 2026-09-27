@@ -17,6 +17,7 @@ import {
 import { describe, formatTime, next, useCountdown } from "./blindClock";
 import { startFormat } from "./dates";
 import { SERVER_UNREACHABLE, smallButton } from "./forms";
+import { entries, pointsText } from "./points";
 import { SignUp } from "./RegistrationsPage";
 import { STATUS_NAMES } from "./tournamentStatus";
 
@@ -27,10 +28,13 @@ export default function GamePage({
   club,
   tournament,
   onBack,
+  onResults,
 }: {
   club: Club;
   tournament: Tournament;
   onBack: () => void;
+  /** Opens the finished tournament's results, where places are corrected. */
+  onResults: () => void;
 }) {
   const [loaded, setLoaded] = useState<Loaded | null>(null);
   const [loadFailed, setLoadFailed] = useState(false);
@@ -169,9 +173,12 @@ export default function GamePage({
         </SignUp>
       )}
       {game?.status === "finished" && (
-        <p className="rounded-2xl bg-white p-4 font-medium text-slate-900 shadow-sm">
-          Турнир завершён
-        </p>
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-white p-4 shadow-sm">
+          <p className="font-medium text-slate-900">Турнир завершён</p>
+          <button type="button" onClick={onResults} className={smallButton}>
+            Результаты и исправление мест
+          </button>
+        </div>
       )}
       {game && game.out.length > 0 && (
         <Finished
@@ -328,15 +335,6 @@ function MoveSuggestion({ game, onMove }: { game: GameState; onMove: () => void 
   );
 }
 
-function entries(player: { reentries: number; addons: number }): string {
-  return [
-    player.reentries > 0 && `re-entry: ${player.reentries}`,
-    player.addons > 0 && `add-on: ${player.addons}`,
-  ]
-    .filter(Boolean)
-    .join(", ");
-}
-
 function Tables({
   game,
   onAct,
@@ -469,6 +467,11 @@ function Finished({
               <p className="text-slate-900">{player.player.name}</p>
               {entries(player) && <p className="text-xs text-slate-500">{entries(player)}</p>}
             </div>
+            {player.points !== null && (
+              <span className="font-medium tabular-nums text-slate-900">
+                {pointsText(player.points)}
+              </span>
+            )}
             {!finished && (
               <div className="flex flex-wrap gap-2">
                 {game.windows.reentry && (

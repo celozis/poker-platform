@@ -12,6 +12,7 @@ import {
 import { startFormat } from "./dates";
 import GamePage from "./GamePage";
 import RegistrationsPage from "./RegistrationsPage";
+import ResultsPage from "./ResultsPage";
 import TournamentForm from "./TournamentForm";
 import { STATUS_NAMES } from "./tournamentStatus";
 
@@ -27,10 +28,12 @@ type View =
   | { screen: "create" }
   | { screen: "edit"; tournament: Tournament }
   | { screen: "registrations"; tournament: Tournament }
-  | { screen: "game"; tournament: Tournament };
+  | { screen: "game"; tournament: Tournament }
+  | { screen: "results"; tournament: Tournament };
 
 /** The club's tournaments: upcoming ones can be edited or cancelled, past ones only viewed.
- * Every tournament opens its registrations, and all but cancelled ones are run from here. */
+ * Every tournament opens its registrations, all but cancelled ones are run from here, and
+ * finished ones open their results. */
 export default function TournamentsPage({ club }: { club: Club }) {
   const [list, setList] = useState<ListState>({ status: "loading" });
   const [view, setView] = useState<View>({ screen: "list" });
@@ -67,7 +70,19 @@ export default function TournamentsPage({ club }: { club: Club }) {
   }
 
   if (view.screen === "game") {
-    return <GamePage club={club} tournament={view.tournament} onBack={backToList} />;
+    const { tournament } = view;
+    return (
+      <GamePage
+        club={club}
+        tournament={tournament}
+        onBack={backToList}
+        onResults={() => setView({ screen: "results", tournament })}
+      />
+    );
+  }
+
+  if (view.screen === "results") {
+    return <ResultsPage club={club} tournament={view.tournament} onBack={backToList} />;
   }
 
   if (view.screen !== "list") {
@@ -134,6 +149,7 @@ export default function TournamentsPage({ club }: { club: Club }) {
             tournaments={list.tournaments.past}
             onOpen={(tournament) => setView({ screen: "registrations", tournament })}
             onRun={(tournament) => setView({ screen: "game", tournament })}
+            onResults={(tournament) => setView({ screen: "results", tournament })}
           />
         </div>
       )}
@@ -149,6 +165,7 @@ function TournamentSection({
   onRun,
   onEdit,
   onCancel,
+  onResults,
 }: {
   title: string;
   empty: string;
@@ -159,6 +176,8 @@ function TournamentSection({
   /** Given only for tournaments that have not started yet. */
   onEdit?: (tournament: Tournament) => void;
   onCancel?: (tournament: Tournament) => void;
+  /** Opens the results; offered only for finished tournaments. */
+  onResults?: (tournament: Tournament) => void;
 }) {
   const headingId = useId();
   return (
@@ -180,6 +199,11 @@ function TournamentSection({
                 onRun={tournament.status === "cancelled" ? undefined : () => onRun(tournament)}
                 onEdit={onEdit && manageable ? () => onEdit(tournament) : undefined}
                 onCancel={onCancel && manageable ? () => onCancel(tournament) : undefined}
+                onResults={
+                  onResults && tournament.status === "finished"
+                    ? () => onResults(tournament)
+                    : undefined
+                }
               />
             );
           })}
@@ -195,12 +219,14 @@ function TournamentRow({
   onRun,
   onEdit,
   onCancel,
+  onResults,
 }: {
   tournament: Tournament;
   onOpen: () => void;
   onRun?: () => void;
   onEdit?: () => void;
   onCancel?: () => void;
+  onResults?: () => void;
 }) {
   const cancelled = tournament.status === "cancelled";
   // A scheduled tournament needs no badge: that is what the upcoming list is.
@@ -236,6 +262,15 @@ function TournamentRow({
             className="rounded-lg border border-slate-300 px-3 py-1 text-sm"
           >
             Проведение
+          </button>
+        )}
+        {onResults && (
+          <button
+            type="button"
+            onClick={onResults}
+            className="rounded-lg border border-slate-300 px-3 py-1 text-sm"
+          >
+            Результаты
           </button>
         )}
         {onEdit && (

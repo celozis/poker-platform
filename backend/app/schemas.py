@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Annotated, Literal
 
 from pydantic import AfterValidator, AwareDatetime, BaseModel, ConfigDict, Field
@@ -175,6 +175,8 @@ class FinishedPlayer(BaseModel):
     place: int
     reentries: int
     addons: int
+    # Rating points, once the tournament is finished.
+    points: int | None
 
 
 class MoveOut(BaseModel):
@@ -226,3 +228,53 @@ class BoardState(BaseModel):
     reentries: int
     # All the chips in play shared among the players left; None while nobody is at a table.
     average_stack: int | None
+
+
+class ResultOut(BaseModel):
+    """A player's result in a finished tournament."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    place: int
+    player: PlayerOut
+    points: int
+    reentries: int
+    addons: int
+
+
+class TournamentResults(BaseModel):
+    status: TournamentStatus
+    # By place, the winner first; empty until the tournament is finished.
+    results: list[ResultOut]
+
+
+class PlaceIn(BaseModel):
+    place: int
+
+
+class SeasonOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    # The year and its half, such as "2026-2".
+    id: str
+    name: str
+    first_day: date
+    last_day: date
+
+
+class RatingRow(BaseModel):
+    # Equal points share a position; the next position counts everyone above.
+    position: int
+    player: PlayerOut
+    points: int
+    # Finished tournaments of the club the player has played this season.
+    tournaments: int
+
+
+class ClubRating(BaseModel):
+    season: SeasonOut
+    # Ids of the seasons either side, to look back at; no next one from the current season.
+    previous_season: str
+    next_season: str | None
+    # By points, the most first; equal points by name.
+    players: list[RatingRow]

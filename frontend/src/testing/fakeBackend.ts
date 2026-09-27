@@ -2,12 +2,14 @@ import { vi } from "vitest";
 import type {
   BlindTemplate,
   BoardState,
+  ClubRating,
   GameState,
   Player,
   Registration,
   SeatedPlayer,
   Tournament,
   TournamentList,
+  TournamentResult,
 } from "../api";
 
 export const ME = {
@@ -116,6 +118,10 @@ type FakeBackendOptions = {
   games?: Record<number, GameState>;
   /** Hall boards by their secret code. */
   boards?: Record<string, BoardState>;
+  /** Results of finished tournaments by tournament id, the winner first. */
+  results?: Record<number, TournamentResult[]>;
+  /** Club ratings by season, the current season first. */
+  ratings?: ClubRating[];
 };
 
 const CONSENT_MISSING = "Без согласия на обработку персональных данных игрока завести нельзя";
@@ -149,6 +155,8 @@ export function fakeBackend({
   checkInOpen = true,
   games = {},
   boards = {},
+  results = {},
+  ratings = [],
 }: FakeBackendOptions = {}) {
   let session = loggedIn;
   const state: TournamentList = { live: [], ...structuredClone(tournaments) };
@@ -156,6 +164,7 @@ export function fakeBackend({
   const league: Player[] = structuredClone(leaguePlayers);
   const signedUp: Record<number, Registration[]> = structuredClone(registrations);
   const played: Record<number, GameState> = structuredClone(games);
+  const finished: Record<number, TournamentResult[]> = structuredClone(results);
   let nextId = 100;
   const clubTournaments = `/api/clubs/${ME.club.id}/tournaments`;
   const clubPlayersUrl = `/api/clubs/${ME.club.id}/players`;
@@ -258,13 +267,16 @@ export function fakeBackend({
     if (action === "knock-out" && seated) {
       game.in_game = game.in_game.filter((s) => s !== seated);
       const { player, reentries, addons } = seated;
-      game.out.push({ player, reentries, addons, place: game.in_game.length + 1 });
+      game.out.push({ player, reentries, addons, place: game.in_game.length + 1, points: null });
       if (game.in_game.length === 1) {
         const [winner] = game.in_game;
-        game.out.push({ player: winner.player, reentries: winner.reentries, addons: winner.addons, place: 1 });
+        game.out.push({ player: winner.player, reentries: winner.reentries, addons: winner.addons, place: 1, points: null });
         game.in_game = [];
         game.status = "finished";
         clock.running = false;
+        // Points as the league's formula gives them to a heads-up; the formula is tested on
+        // the backend.
+        game.out.forEach((f) => (f.points = f.place === 1 ? 4 : 0));
       }
       return answer();
     }
@@ -295,6 +307,24 @@ export function fakeBackend({
       return answer();
     }
     return json({ detail: "Not Found" }, 404);
+  }
+
+  // Points go with the place, not the player, so a corrected place keeps each place's points.
+  function resultsRoute(method: string, tournamentId: number, playerId: number, body?: { place: number }) {
+    const list = finished[tournamentId] ?? [];
+    const tournament = [...state.live, ...state.upcoming, ...state.past].find((t) => t.id === tournamentId);
+    const answer = () => json({ status: tournament?.status ?? "finished", results: list });
+    if (method === "GET") return answer();
+    const moved = list.find((r) => r.player.id === playerId);
+    if (!moved) return json({ detail: "Игрок не играл в этом турнире" }, 404);
+    if (!body || body.place < 1 || body.place > list.length) {
+      return json({ detail: [`Место: от 1 до ${list.length}`] }, 422);
+    }
+    const byPlace = list.map((r) => r.points);
+    const reordered = list.filter((r) => r !== moved);
+    reordered.splice(body.place - 1, 0, moved);
+    finished[tournamentId] = reordered.map((r, i) => ({ ...r, place: i + 1, points: byPlace[i] }));
+    return json({ status: "finished", results: finished[tournamentId] });
   }
 
   const fetch = vi.fn(async (url: string, init?: RequestInit) => {
@@ -342,6 +372,15 @@ export function fakeBackend({
     const [, boardToken] = url.match(/^\/api\/board\/(\w+)$/) ?? [];
     if (method === "GET" && boardToken) {
       return boards[boardToken] ? json(boards[boardToken]) : json({ detail: "Табло не найдено" }, 404);
+    }
+    if (method === "GET" && pathname === `/api/clubs/${ME.club.id}/rating`) {
+      const season = searchParams.get("season");
+      const rating = season ? ratings.find((r) => r.season.id === season) : ratings[0];
+      return rating ? json(rating) : json({ detail: "Такого сезона нет" }, 404);
+    }
+    const resultsMatch = url.match(/^\/api\/clubs\/\d+\/tournaments\/(\d+)\/results(?:\/(\d+))?$/);
+    if (resultsMatch) {
+      return resultsRoute(method, Number(resultsMatch[1]), Number(resultsMatch[2]), body);
     }
     const registrationsMatch = url.match(/^\/api\/clubs\/\d+\/tournaments\/(\d+)\/registrations(.*)$/);
     if (registrationsMatch) {

@@ -155,9 +155,15 @@ describe("running a tournament", () => {
       expect.stringContaining("2 место"),
     ]);
     expect(within(results).getAllByRole("listitem")[0]).toHaveTextContent("Мария Иванова");
+    expect(within(results).getAllByRole("listitem")[0]).toHaveTextContent("4 очка");
+    expect(within(results).getAllByRole("listitem")[1]).toHaveTextContent("0 очков");
     expect(within(results).queryByRole("button")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Пауза" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Начать турнир" })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Результаты и исправление мест" }));
+
+    expect(await screen.findByRole("heading", { name: "Результаты" })).toBeInTheDocument();
   });
 
   it("offers re-entry and add-on while their windows are open", async () => {
@@ -165,7 +171,7 @@ describe("running a tournament", () => {
       running({
         windows: { reentry: true, addon: true, late_registration: false },
         in_game: [aSeat(MARIA, 1, 2), aSeat(PETR, 1, 3)],
-        out: [{ player: IVAN, place: 3, reentries: 0, addons: 0 }],
+        out: [{ player: IVAN, place: 3, reentries: 0, addons: 0, points: null }],
       }),
     );
     const out = await screen.findByRole("list", { name: "Выбывшие" });
@@ -185,7 +191,7 @@ describe("running a tournament", () => {
   });
 
   it("offers neither re-entry nor add-on once their windows have closed", async () => {
-    await openGame(running({ out: [{ player: IVAN, place: 3, reentries: 0, addons: 0 }], in_game: [aSeat(MARIA, 1, 2), aSeat(PETR, 1, 3)] }));
+    await openGame(running({ out: [{ player: IVAN, place: 3, reentries: 0, addons: 0, points: null }], in_game: [aSeat(MARIA, 1, 2), aSeat(PETR, 1, 3)] }));
 
     const out = await screen.findByRole("list", { name: "Выбывшие" });
     expect(within(out).queryByRole("button", { name: "Re-entry" })).not.toBeInTheDocument();
@@ -196,7 +202,7 @@ describe("running a tournament", () => {
     const { user } = await openGame(
       running({
         in_game: [aSeat(MARIA, 1, 2), aSeat(PETR, 1, 3)],
-        out: [{ player: IVAN, place: 3, reentries: 0, addons: 0 }],
+        out: [{ player: IVAN, place: 3, reentries: 0, addons: 0, points: null }],
       }),
     );
     const out = await screen.findByRole("list", { name: "Выбывшие" });
@@ -237,8 +243,8 @@ describe("running a tournament", () => {
         seats_per_table: 3,
         in_game: [aSeat(IVAN, 1, 1), aSeat(MARIA, 1, 2)],
         out: [
-          { player: PETR, place: 3, reentries: 0, addons: 0 },
-          { player: aPlayer({ id: 4, name: "Олег Орлов" }), place: 4, reentries: 0, addons: 0 },
+          { player: PETR, place: 3, reentries: 0, addons: 0, points: null },
+          { player: aPlayer({ id: 4, name: "Олег Орлов" }), place: 4, reentries: 0, addons: 0, points: null },
         ],
       }),
     );

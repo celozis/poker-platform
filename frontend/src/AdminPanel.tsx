@@ -2,9 +2,10 @@ import { useState } from "react";
 import type { Me } from "./api";
 import LeagueBrand from "./LeagueBrand";
 import PlayersPage from "./PlayersPage";
+import RatingPage from "./RatingPage";
 import TournamentsPage from "./TournamentsPage";
 
-const SECTIONS = ["Турниры", "Игроки"] as const;
+const SECTIONS = ["Турниры", "Игроки", "Рейтинг"] as const;
 type Section = (typeof SECTIONS)[number];
 
 /** The club admin's workspace, dressed in the club's own logo and colours. */
@@ -40,7 +41,7 @@ export default function AdminPanel({ me, onLogout }: { me: Me; onLogout: () => v
         <div className="h-1" style={{ backgroundColor: club.accent_color }} />
       </header>
       <main className="mx-auto w-full max-w-5xl flex-1 px-4 py-8">
-        <nav aria-label="Разделы" className="mb-6 flex gap-2">
+        <nav aria-label="Разделы" className="mb-6 flex flex-wrap gap-2">
           {SECTIONS.map((name) => (
             <button
               key={name}
@@ -56,7 +57,9 @@ export default function AdminPanel({ me, onLogout }: { me: Me; onLogout: () => v
             </button>
           ))}
         </nav>
-        {section === "Турниры" ? <TournamentsPage club={club} /> : <PlayersPage club={club} />}
+        {section === "Турниры" && <TournamentsPage club={club} />}
+        {section === "Игроки" && <PlayersPage club={club} />}
+        {section === "Рейтинг" && <RatingPage club={club} />}
         <LeagueBrand className="mt-8 justify-center text-slate-500" />
       </main>
     </>

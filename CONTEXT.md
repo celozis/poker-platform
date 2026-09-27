@@ -90,17 +90,24 @@ _Avoid_: Rebalance, reseat
 
 **Final Table**: The one table left once the remaining players fit at it. The system assembles it by itself right after the knock-out that makes this possible, drawing every seat again.
 
-**Place (Finish)**: Where a player finished. Whoever finishes later places higher; the last player standing wins (place 1) and finishes the tournament. A re-entry or a late player after a knock-out moves that knocked-out player's place down. Determines rating points.
+**Place (Finish)**: Where a player finished. Whoever finishes later places higher; the last player standing wins (place 1) and finishes the tournament. A re-entry or a late player after a knock-out moves that knocked-out player's place down. Determines rating points. Places run from 1 to the number of players, each player counted once however many times they re-entered; no two players share a place.
+
+**Result**: A player's place and points in a finished tournament. Fixed when the tournament finishes (ADR-0008); until then places follow the order of knock-outs.
+
+**Place Correction**: The admin puts a player of a finished tournament on the place they really finished in; the players between the old and the new place move by one, and everyone's points and the club rating are counted again. In a live tournament a mistaken knock-out is undone instead.
+_Avoid_: Edit result, override
 
 ### Rating & Leaderboard
 
-**Rating**: A player's cumulative score across tournaments. Calculated from places (1st = most points, out = 0) and bounties (KO format).
+**Rating**: A player's cumulative score across tournaments. Calculated from places (1st = most points, out = 0) and bounties (KO format; not yet).
+
+**Club Rating**: The points each player has scored in the club's finished tournaments of a season, added up; the most first, and equal points share a position. Only the club's own tournaments count. Worked out on every request, so a place correction shows at once.
 
 **Rating Level**: Hierarchical: Club Rating → City Rating → Russia/CIS Rating. Separate leaderboards.
 
-**Period**: Season or timeframe (e.g., September 2024 → January 2025). Resets for new periods.
+**Season (Period)**: A half of the year: 1 January – 30 June or 1 July – 31 December, midnight to midnight in the league's time (UTC+7). The club rating starts again every season. A tournament belongs to the season its scheduled start falls in, however late it finishes. Earlier seasons stay viewable.
 
-**Points**: Numeric score for each tournament result. Formula defined per club or league-wide.
+**Points**: Rating points for a place. The league's default formula: 10 × (√(players ÷ place) − 1), rounded to a whole point; the winner of a bigger field gets more (4 of 2, 20 of 9, 50 of 36) and the last place always 0. League-wide, one formula in the MVP; stored with each result, so a later formula does not rewrite old seasons.
 
 ### Cashier & Financial
 
@@ -159,6 +166,7 @@ _Avoid_: Tabletop
 - **Database** (PostgreSQL): Multi-tenant via shared tables with a `club_id` column; access is enforced by the `AdminClub` dependency on every `/api/clubs/{club_id}/...` route (ADR-0003). Accessed via SQLAlchemy 2 with sync sessions (ADR-0002); Alembic migrations run automatically on backend start.
 - **Players**: League-wide `players` (one per phone), each club's list in `club_players`, and `registrations` of a club's players for its tournaments (ADR-0005).
 - **Running a tournament**: the game lives in the tournament row (status, blind clock) and in its registrations (seat, finish order, re-entries, add-ons); the blind clock is worked out from the time, with no background job (ADR-0006).
+- **Results and rating**: the last knock-out fixes every player's place and points in their registration; a place correction rewrites them. The club rating adds the points up per season on every request, with no table of its own (ADR-0008).
 - **Realtime**: after committing a change, the backend tells the tournament's watchers "it has changed" (`app/realtime.py`, in-process); each connected hall board reads the board afresh and gets it over its WebSocket. One backend process only for now (ADR-0007).
 - **Integrations**: iiko (cashier), ЮДС (loyalty), Telegram API, VK ID (auth).
 

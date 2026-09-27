@@ -132,6 +132,10 @@ class Registration(Base):
             "tournament_id", "table_number", "seat_number", deferrable=True, initially="DEFERRED"
         ),
         UniqueConstraint("tournament_id", "finish_order"),
+        # One player per place. Checked at commit, so that a corrected place can move others.
+        UniqueConstraint(
+            "tournament_id", "place", deferrable=True, initially="DEFERRED"
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -150,6 +154,10 @@ class Registration(Base):
     addons: Mapped[int] = mapped_column(default=0)
     # One add-on per entry: taken in the current one; a re-entry starts a new entry.
     addon_this_entry: Mapped[bool] = mapped_column(default=False)
+    # The result, fixed when the tournament finishes (app/results.py): the place, which the admin
+    # can correct, and the rating points for it (app/points.py). finish_order stays as it was.
+    place: Mapped[int | None]
+    points: Mapped[int | None]
 
     player: Mapped[Player] = relationship()
 

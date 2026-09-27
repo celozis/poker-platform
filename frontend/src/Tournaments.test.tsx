@@ -61,7 +61,8 @@ describe("club tournaments", () => {
     const summer = within(past).getByRole("listitem", { name: "Летний кубок" });
     expect(summer).toHaveTextContent("1 августа");
     expect(summer).toHaveTextContent("Завершён");
-    expect(buttonNames(summer)).toEqual(["Регистрации", "Проведение"]);  // no editing or cancelling
+    // Results only once finished; no editing or cancelling.
+    expect(buttonNames(summer)).toEqual(["Регистрации", "Проведение", "Результаты"]);
   });
 
   it("shows no live section while nothing is running", async () => {
