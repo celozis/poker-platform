@@ -6,6 +6,7 @@ import type {
   GameState,
   PaymentMethod,
   Player,
+  PlayerCabinet,
   Registration,
   SeatedPlayer,
   Tournament,
@@ -100,8 +101,23 @@ export function json(body: unknown, status = 200) {
   });
 }
 
+/** The cabinet of a player of ME's club as the backend returns it; override any field. */
+export function aCabinet(overrides: Partial<PlayerCabinet> = {}): PlayerCabinet {
+  return {
+    player: { name: "Мария Иванова", phone: "+79135551234", telegram_linked: false },
+    season: { id: "2026-2", name: "2-е полугодие 2026", first_day: "2026-07-01", last_day: "2026-12-31" },
+    clubs: [{ club: ME.club, rating: null, schedule: [] }],
+    history: [],
+    ...overrides,
+  };
+}
+
 type FakeBackendOptions = {
+  /** An admin is logged in to the admin panel. */
   loggedIn?: boolean;
+  /** A player is logged in to their web cabinet, which is `cabinet`. */
+  playerLoggedIn?: boolean;
+  cabinet?: PlayerCabinet;
   /** Routes such as "POST /api/auth/request-code" that fail as if the server were unreachable. */
   down?: string[];
   /** `live` may be left out when nothing is running. */
@@ -153,6 +169,8 @@ const byName = (a: { name: string }, b: { name: string }) => a.name.localeCompar
 // A stand-in for the backend API: remembers whether the browser is logged in and the club's tournaments.
 export function fakeBackend({
   loggedIn = false,
+  playerLoggedIn = false,
+  cabinet = aCabinet(),
   down = [],
   tournaments = { upcoming: [], past: [] },
   rejectWith,
@@ -170,6 +188,7 @@ export function fakeBackend({
   cashiers = {},
 }: FakeBackendOptions = {}) {
   let session = loggedIn;
+  let playerSession = playerLoggedIn;
   const state: TournamentList = { live: [], ...structuredClone(tournaments) };
   const clubPlayers: Player[] = structuredClone(players);
   const league: Player[] = structuredClone(leaguePlayers);
@@ -407,6 +426,20 @@ export function fakeBackend({
       }
       case "POST /api/auth/logout":
         session = false;
+        return new Response(null, { status: 204 });
+      case "GET /api/cabinet":
+        return playerSession ? json(cabinet) : json({ detail: "Требуется вход" }, 401);
+      case "POST /api/cabinet/request-code":
+        return new Response(null, { status: 204 });
+      case "POST /api/cabinet/verify-code": {
+        if (body.code !== VALID_CODE) {
+          return json({ detail: "Неверный или просроченный код" }, 401);
+        }
+        playerSession = true;
+        return new Response(null, { status: 204 });
+      }
+      case "POST /api/cabinet/logout":
+        playerSession = false;
         return new Response(null, { status: 204 });
       case "GET /api/blind-templates":
         return json(TEMPLATES);

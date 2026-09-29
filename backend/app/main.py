@@ -14,6 +14,7 @@ from app import (
     auth,
     blind_templates,
     board,
+    cabinet,
     cashier,
     clubs,
     game,
@@ -59,6 +60,7 @@ app.include_router(results.router)
 app.include_router(rating.router)
 app.include_router(cashier.router)
 app.include_router(tournament_changes.router)
+app.include_router(cabinet.router)
 
 
 class Health(BaseModel):

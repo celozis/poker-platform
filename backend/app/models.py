@@ -32,10 +32,13 @@ class Admin(Base):
 
 
 class LoginCode(Base):
-    """The one pending login code for a phone number; requesting a new code replaces it."""
+    """The one pending login code for a phone number and purpose; requesting a new code replaces
+    it. The purpose, admin or cabinet (app/auth.py LoginPurpose), keeps the admin panel's code and
+    the player cabinet's apart for an admin who also plays."""
 
     __tablename__ = "login_codes"
 
+    purpose: Mapped[str] = mapped_column(String(10), primary_key=True)
     phone: Mapped[str] = mapped_column(String(16), primary_key=True)
     code_hash: Mapped[str] = mapped_column(String(64))
     sent_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
@@ -110,6 +113,19 @@ class Player(Base):
     phone: Mapped[str] = mapped_column(String(16), unique=True)
     # When the player first agreed to the processing of personal data (152-ФЗ).
     consent_given_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class PlayerSession(Base):
+    """A player logged in to their web cabinet (app/cabinet.py); the admin panel's sessions are
+    AdminSession."""
+
+    __tablename__ = "player_sessions"
+
+    token_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    player_id: Mapped[int] = mapped_column(ForeignKey("players.id", ondelete="CASCADE"), index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+    player: Mapped[Player] = relationship()
 
 
 class ClubPlayer(Base):

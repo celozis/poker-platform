@@ -1,11 +1,20 @@
 import { type FormEvent, useState } from "react";
-import { requestCode, verifyCode } from "./api";
+import { type LoginTo, requestCode, verifyCode } from "./api";
 import { inputClass, SERVER_UNREACHABLE } from "./forms";
 import LeagueBrand from "./LeagueBrand";
 
 const buttonClass = "rounded-lg bg-slate-900 px-4 py-2 font-medium text-white";
 
-export default function LoginPage({ onLoggedIn }: { onLoggedIn: () => void }) {
+/** Login by phone and a one-time code, to the admin panel or to the player's cabinet (`to`). */
+export default function LoginPage({
+  to,
+  title,
+  onLoggedIn,
+}: {
+  to: LoginTo;
+  title: string;
+  onLoggedIn: () => void;
+}) {
   const [phone, setPhone] = useState("");
   const [code, setCode] = useState("");
   const [step, setStep] = useState<"phone" | "code">("phone");
@@ -15,7 +24,7 @@ export default function LoginPage({ onLoggedIn }: { onLoggedIn: () => void }) {
     event.preventDefault();
     setError(null);
     try {
-      await requestCode(phone);
+      await requestCode(to, phone);
       setCode("");
       setStep("code");
     } catch {
@@ -27,7 +36,7 @@ export default function LoginPage({ onLoggedIn }: { onLoggedIn: () => void }) {
     event.preventDefault();
     setError(null);
     try {
-      if (await verifyCode(phone, code)) {
+      if (await verifyCode(to, phone, code)) {
         onLoggedIn();
       } else {
         setError("Неверный или просроченный код");
@@ -46,9 +55,7 @@ export default function LoginPage({ onLoggedIn }: { onLoggedIn: () => void }) {
     <main className="flex flex-1 items-center justify-center p-4">
       <div className="w-full max-w-sm rounded-2xl bg-white p-8 shadow-sm">
         <LeagueBrand className="mb-6 text-slate-900" />
-        <h1 className="mb-6 text-xl font-semibold text-slate-900">
-          Вход для администратора клуба
-        </h1>
+        <h1 className="mb-6 text-xl font-semibold text-slate-900">{title}</h1>
         {step === "phone" ? (
           <form onSubmit={submitPhone} className="flex flex-col gap-4">
             <label className="flex flex-col gap-1 text-sm text-slate-700">

@@ -25,16 +25,15 @@ from sqlalchemy.orm import Session
 
 from app import realtime
 from app.auth import normalize_phone
-from app.game import late_registration_closed_because
 from app.models import Club, Registration, TelegramUser, Tournament
 from app.players import add_to_club_list, league_player
 from app.registrations import (
-    CHECK_IN_WINDOW,
     dropping_out_closed_because,
     find_registration,
     registration_closed_because,
 )
 from app.rating import club_standings
+from app.schedule import club_schedule
 from app.seasons import LEAGUE_TIME, season_at
 
 GREETING = (
@@ -60,9 +59,6 @@ NOT_RUSSIAN_PHONE = (
     "Чтобы записаться на турнир, обратитесь к администратору клуба."
 )
 CLUB_REQUEST = "Выберите свой клуб:"
-# The soonest tournaments the schedule shows: enough for a couple of weeks, and one message
-# stays well within Telegram's 4096 characters.
-SCHEDULE_LENGTH = 10
 WEEKDAYS = ["пн", "вт", "ср", "чт", "пт", "сб", "вс"]
 MONTHS = [
     "января", "февраля", "марта", "апреля", "мая", "июня",
@@ -243,33 +239,9 @@ def roubles(amount: int) -> str:
 
 
 def _schedule(session: Session, user: TelegramUser, club: Club, now: datetime) -> Reply:
-    """The club's tournaments a player can still sign up for, the soonest first, each with a button
-    to sign up or, for one the player is signed up for, to drop out: those that have not started
-    yet, and those going on while their late registration is open. One the admin has neither
-    started nor cancelled goes once the player can no longer come to it: its check-in closes
-    CHECK_IN_WINDOW after its start."""
-    coming = session.scalars(
-        select(Tournament)
-        .where(
-            Tournament.club_id == club.id,
-            Tournament.status == "scheduled",
-            Tournament.starts_at >= now - CHECK_IN_WINDOW,
-        )
-        .order_by(Tournament.starts_at, Tournament.id)
-        .limit(SCHEDULE_LENGTH)
-    ).all()
-    live = [
-        t
-        for t in session.scalars(
-            select(Tournament).where(
-                Tournament.club_id == club.id,
-                Tournament.status.in_(["running", "paused"]),
-                Tournament.late_registration_until_level.is_not(None),
-            )
-        )
-        if late_registration_closed_because(t, now) is None
-    ]
-    tournaments = sorted([*live, *coming], key=lambda t: (t.starts_at, t.id))[:SCHEDULE_LENGTH]
+    """The club's schedule (app/schedule.py), each tournament with a button to sign up or, for one
+    the player is signed up for, to drop out."""
+    tournaments = club_schedule(session, club.id, now)
     if not tournaments:
         return Reply(f"У клуба {club.name} пока нет запланированных турниров.")
     # The player's registrations for these tournaments: whether they have come, by tournament.

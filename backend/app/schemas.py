@@ -291,6 +291,74 @@ class ClubRating(BaseModel):
     players: list[RatingRow]
 
 
+class CabinetPlayer(BaseModel):
+    """The player's profile, as their web cabinet shows it to them."""
+
+    name: str
+    phone: str
+    # Whether a Telegram account is linked to the player in the bot.
+    telegram_linked: bool
+
+
+class CabinetRating(BaseModel):
+    """The player's row of a club rating."""
+
+    # Equal points share a position.
+    position: int
+    points: int
+    # Finished tournaments of the club the player has played this season.
+    tournaments: int
+
+
+class ScheduledTournament(BaseModel):
+    """A tournament of the club's schedule, as the player's cabinet shows it."""
+
+    name: str
+    starts_at: Annotated[AwareDatetime, AfterValidator(_in_utc)]
+    buy_in: int
+    # Started, with late registration still open.
+    going_on: bool
+    # Whether the player is signed up for it.
+    registered: bool
+
+
+class CabinetClub(BaseModel):
+    """One of the player's clubs: one whose player list they are on."""
+
+    club: ClubOut
+    # The player in the club's rating of the current season; None until they have played one of
+    # its finished tournaments this season.
+    rating: CabinetRating | None
+    # The club's schedule, the soonest first, as the Telegram bot shows it.
+    schedule: list[ScheduledTournament]
+
+
+class TournamentPlayed(BaseModel):
+    """A finished tournament the player played, and how they did."""
+
+    starts_at: Annotated[AwareDatetime, AfterValidator(_in_utc)]
+    tournament: str
+    club: str
+    place: int
+    # Of how many: everyone who played, counted once however many times they re-entered.
+    players: int
+    points: int
+    reentries: int
+    addons: int
+
+
+class PlayerCabinet(BaseModel):
+    """Everything the player's web cabinet shows them, and only their own."""
+
+    player: CabinetPlayer
+    # The current season, of the ratings.
+    season: SeasonOut
+    # Every club's, the latest first.
+    history: list[TournamentPlayed]
+    # In the order the player joined them.
+    clubs: list[CabinetClub]
+
+
 TransactionKind = Literal["buy_in", "reentry", "addon"]
 PaymentMethod = Literal["cash", "card"]
 

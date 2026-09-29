@@ -28,5 +28,14 @@ def log_in(client: TestClient, caplog: pytest.LogCaptureFixture, phone: str) -> 
     assert response.status_code == 204
 
 
+def log_in_to_cabinet(client: TestClient, caplog: pytest.LogCaptureFixture, phone: str) -> None:
+    """Logs a player in to their web cabinet, as log_in does an admin to the admin panel."""
+    caplog.set_level("INFO")
+    assert client.post("/api/cabinet/request-code", json={"phone": phone}).status_code == 204
+    code = code_from_log(caplog, phone)
+    response = client.post("/api/cabinet/verify-code", json={"phone": phone, "code": code})
+    assert response.status_code == 204
+
+
 def a_different_code(code: str) -> str:
     return f"{(int(code) + 1) % 1_000_000:06d}"

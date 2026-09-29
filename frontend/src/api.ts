@@ -113,21 +113,27 @@ export async function fetchMe(): Promise<Me | null> {
   return response.json();
 }
 
-export async function requestCode(phone: string): Promise<void> {
-  const response = await postJson("/api/auth/request-code", { phone });
+/** Where one logs in by phone and code: the admin panel or the player's web cabinet. Each has a
+ * session of its own, and one does not open the other. */
+export type LoginTo = "admin" | "cabinet";
+
+const LOGIN_URLS: Record<LoginTo, string> = { admin: "/api/auth", cabinet: "/api/cabinet" };
+
+export async function requestCode(to: LoginTo, phone: string): Promise<void> {
+  const response = await postJson(`${LOGIN_URLS[to]}/request-code`, { phone });
   if (!response.ok) throw failed(response);
 }
 
 /** Returns false when the code is wrong or expired. */
-export async function verifyCode(phone: string, code: string): Promise<boolean> {
-  const response = await postJson("/api/auth/verify-code", { phone, code });
+export async function verifyCode(to: LoginTo, phone: string, code: string): Promise<boolean> {
+  const response = await postJson(`${LOGIN_URLS[to]}/verify-code`, { phone, code });
   if (response.status === 401) return false;
   if (!response.ok) throw failed(response);
   return true;
 }
 
-export async function logout(): Promise<void> {
-  const response = await postJson("/api/auth/logout");
+export async function logout(to: LoginTo): Promise<void> {
+  const response = await postJson(`${LOGIN_URLS[to]}/logout`);
   if (!response.ok) throw failed(response);
 }
 
@@ -525,4 +531,52 @@ export async function changePaymentMethod(
 ): Promise<Cashier> {
   const url = `${cashierUrl(clubId, tournamentId)}/transactions/${transactionId}/payment-method`;
   return accepted(await postJson(url, { payment_method: method }));
+}
+
+/** The player's profile. `telegram_linked`: a Telegram account is linked to them in the bot. */
+export type CabinetPlayer = { name: string; phone: string; telegram_linked: boolean };
+
+/** The player's row of a club rating: equal points share a position. */
+export type CabinetRating = { position: number; points: number; tournaments: number };
+
+/** A tournament of the club's schedule; `going_on`: started, late registration still open. */
+export type ScheduledTournament = {
+  name: string;
+  starts_at: string;
+  buy_in: number;
+  going_on: boolean;
+  registered: boolean;
+};
+
+/** One of the player's clubs. `rating`: null until they have played a finished tournament of
+ * it this season; `schedule`: as the Telegram bot shows it, the soonest first. */
+export type CabinetClub = { club: Club; rating: CabinetRating | null; schedule: ScheduledTournament[] };
+
+/** A finished tournament the player played; `players`: of how many. */
+export type TournamentPlayed = {
+  starts_at: string;
+  tournament: string;
+  club: string;
+  place: number;
+  players: number;
+  points: number;
+  reentries: number;
+  addons: number;
+};
+
+/** Everything the player's web cabinet shows them: `season` is the ratings' current season,
+ * `clubs` in the order the player joined them, `history` the latest first. */
+export type PlayerCabinet = {
+  player: CabinetPlayer;
+  season: Season;
+  clubs: CabinetClub[];
+  history: TournamentPlayed[];
+};
+
+/** The logged-in player's cabinet, or null when no player is logged in. */
+export async function fetchCabinet(): Promise<PlayerCabinet | null> {
+  const response = await fetch("/api/cabinet");
+  if (response.status === 401) return null;
+  if (!response.ok) throw failed(response);
+  return response.json();
 }

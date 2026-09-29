@@ -47,6 +47,8 @@ We're building a system to replace manual tournament management (spreadsheets, c
 
 **Player's Club (in the bot)**: The club the player chose in the bot: the bot shows its schedule, and the player joins its Club Player List. The player can change it (`/club`).
 
+**Player's Clubs (in the web cabinet)**: Every club whose Club Player List the player is on, in the order they joined them; the cabinet shows the rating and schedule of each.
+
 **Schedule (расписание)**: A club's tournaments a player can still sign up for, the ten soonest, with date, time (league time) and buy-in: those that have not started and are not cancelled, and those going on while their Late Registration is open (marked as going on). One the admin has neither started nor cancelled drops out once its check-in closes, 12 hours after its start. Each has a button to sign up or, once signed up (marked in the schedule), to drop out; no drop-out button once the tournament is going on or the player has come.
 
 **Status**: Player's loyalty tier (auto-calculated from number of games, ЮДС integration). Affects discount on buy-in.
@@ -136,9 +138,11 @@ _Avoid_: Payment record, entry (for the money)
 
 **Admin (Администратор)**: Runs tournaments: register players, manage seating, track results, handle disputes. Belongs to exactly one club.
 
-**Login Code**: A six-digit one-time code for passwordless login by phone number. Valid for 5 minutes, burns after 5 wrong tries, and a new one is sent at most once a minute. In the prototype it is written to the backend log instead of being sent by SMS.
+**Login Code**: A six-digit one-time code for passwordless login by phone number, to the Admin Panel or to the Web Cabinet: a code for one does not open the other, even for an admin who also plays. Valid for 5 minutes, burns after 5 wrong tries, and a new one is sent at most once a minute. In the prototype it is written to the backend log instead of being sent by SMS.
 
 **Admin Session**: What a successful login creates: an HttpOnly cookie holding a random token, stored hashed on the server for 7 days. Logout deletes it on the server.
+
+**Player Session**: The same for a player logged in to the Web Cabinet, in a cookie of its own that only the cabinet's addresses get. It opens nothing of the Admin Panel, and an Admin Session nothing of the cabinet.
 
 **Floor Manager (Флор-менеджер)**: Oversees the game floor: resolves disputes, calls dealer rotations, enforces rules.
 
@@ -158,7 +162,7 @@ _Avoid_: Payment record, entry (for the money)
 
 **Result Notice**: The bot's message to a player whose Telegram is linked once their tournament has finished: their place of how many and the points it gives in the club rating. Sent once, and only for a tournament finished within the last day, so a player who links their Telegram later is not sent old results. A place corrected afterwards is not sent again.
 
-**Web Cabinet (ЛК)**: Web-based personal account. Player sees their profile, history, rating. Login via phone/VK/Telegram.
+**Web Cabinet (ЛК)**: The player's own page on the site's root address, laid out for a phone first. The player logs in by phone and Login Code (any player the league knows) and sees their profile (name, phone, their clubs, whether Telegram is linked), their position and points in the rating of each of their clubs this season, the Schedule of each of their clubs (marked where they are signed up), and the finished tournaments they played in any club, the latest first: date, tournament, club, place of how many, points, re-entries and add-ons. Which player is shown comes from the Player Session alone: no address takes a player's id (ADR-0012). VK/Telegram login is not there yet.
 
 **Admin Panel**: Web dashboard for admins to run tournaments, manage players, track cash.
 
@@ -179,11 +183,12 @@ _Avoid_: Tabletop
 
 - **Backend API** (FastAPI, Python): Manages tournaments, players, ratings, cash. Exposes REST + WebSocket.
 - **Telegram Bot** (aiogram, Python): Primary player entry point. The `bot` service runs the backend's code (`app/bot/`) by long polling and works with the database directly; where each player has got to is stored in `telegram_users`, so a restart loses nothing (ADR-0010).
-- **Web Frontend** (React, TS): Admin Panel, Player Cabinet, Dealer Cabinet, Hall Board (`/board/<board token>`).
+- **Web Frontend** (React, TS): Web Cabinet (the site's root), Admin Panel (`/admin`), Hall Board (`/board/<board token>`); Dealer Cabinet later.
 - **Database** (PostgreSQL): Multi-tenant via shared tables with a `club_id` column; access is enforced by the `AdminClub` dependency on every `/api/clubs/{club_id}/...` route (ADR-0003). Accessed via SQLAlchemy 2 with sync sessions (ADR-0002); Alembic migrations run automatically on backend start.
 - **Players**: League-wide `players` (one per phone), each club's list in `club_players`, and `registrations` of a club's players for its tournaments (ADR-0005).
 - **Running a tournament**: the game lives in the tournament row (status, blind clock) and in its registrations (seat, finish order, re-entries, add-ons); the blind clock is worked out from the time, with no background job (ADR-0006).
 - **Cashier**: every paid action writes a row to `transactions` (`app/transactions.py`); a storno is another row pointing at the one it reverses. The cashier's summary and the CSV are worked out from the rows on every request (`app/cashier.py`, ADR-0009).
+- **Web Cabinet**: `/api/cabinet` (`app/cabinet.py`): login, logout and the whole cabinet in one `GET`, for the player of the Player Session. Sending and checking login codes and making session tokens are shared with the admin login (`app/auth.py`); the club schedule with the bot (`app/schedule.py`); the club rating's `club_standings` with the admin panel and the bot (ADR-0012).
 - **Results and rating**: the last knock-out fixes every player's place and points in their registration; a place correction rewrites them. The club rating adds the points up per season on every request, with no table of its own (ADR-0008).
 - **Realtime**: a change of a tournament, in the backend or the bot, sends PostgreSQL `NOTIFY tournament_changed` in its own transaction, delivered once it commits; every backend process `LISTEN`s and wakes its watchers (`app/realtime.py`). Each connected hall board then reads the board afresh and gets it over its WebSocket (ADR-0007); an admin panel page gets `changed` over `/api/clubs/{club_id}/tournaments/{id}/ws` and reads afresh (ADR-0011).
 - **Bot notifications**: the bot process looks every 30 seconds for reminders and results due and sends them; each registration keeps when they were sent (`app/bot/notifications.py`, ADR-0011).
@@ -230,7 +235,8 @@ Requires Docker (Docker Desktop on Windows/macOS). Repo layout: `backend/` (Fast
 docker compose up --build
 ```
 
-- Frontend: http://localhost:5173 (admin login; API and database status in the footer)
+- Player's web cabinet: http://localhost:5173 (login by a player's phone)
+- Admin panel: http://localhost:5173/admin (admin login; API and database status in the footer)
 - Hall board: http://localhost:5173/board/<board token>, no login; the admin panel shows the link on a tournament's running page ("Проведение")
 - Backend API: http://localhost:8000 (health check: `/api/health`, docs: `/docs`)
 - PostgreSQL: `localhost:5433`, user/password `poker`/`poker`, databases `poker` (dev) and `poker_test` (tests). Host port 5433 avoids clashing with a locally installed PostgreSQL.
@@ -248,7 +254,7 @@ docker compose exec backend python -m app.seed
 | Покер-клуб «Обь» | Анна Соколова | +7 999 000-00-01 |
 | Покер-клуб «Енисей» | Дмитрий Орлов | +7 999 000-00-02 |
 
-To log in, enter the phone on http://localhost:5173 and read the code from the backend log (no SMS is sent in the prototype):
+To log in, enter the phone on http://localhost:5173/admin and read the code from the backend log (no SMS is sent in the prototype). A player logs in to their cabinet on http://localhost:5173 the same way, with the phone the club or the bot has for them:
 
 ```bash
 docker compose logs backend | grep "Код входа"
