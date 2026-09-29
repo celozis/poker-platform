@@ -32,6 +32,30 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    # Healthy once migrations are applied and the API answers; the bot waits for it.
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')"]
+      interval: 2s
+      timeout: 5s
+      retries: 60
+
+  # The Telegram bot: the backend's image and code, run by long polling. Its token comes from
+  # TELEGRAM_BOT_TOKEN in the .env file next to this one; without it the bot logs how to get one
+  # and stops.
+  bot:
+    build: ./backend
+    command: python -m app.bot
+    # Started again after a crash (say, Telegram unreachable at start), but not after the clean
+    # stop without a token.
+    restart: on-failure
+    environment:
+      DATABASE_URL: postgresql+psycopg://poker:poker@db:5432/poker
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+    volumes:
+      - ./backend:/app
+    depends_on:
+      backend:
+        condition: service_healthy
 
   frontend:
     build: ./frontend

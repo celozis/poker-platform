@@ -2,7 +2,7 @@ import secrets
 from datetime import datetime, timedelta
 from typing import Any
 
-from sqlalchemy import DateTime, ForeignKey, Interval, String, UniqueConstraint
+from sqlalchemy import BigInteger, DateTime, ForeignKey, Interval, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -171,6 +171,25 @@ class Registration(Base):
         if self.table_number is not None:
             return "in_game"
         return "registered" if self.checked_in_at is None else "checked_in"
+
+
+class TelegramUser(Base):
+    """Someone who has written to the Telegram bot, and how far they have got with it. The bot's
+    conversation goes on from what is stored here (app/bot/conversation.py)."""
+
+    __tablename__ = "telegram_users"
+
+    # Telegram's user id, which is also the id of the user's private chat with the bot.
+    telegram_id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=False)
+    # When they agreed in the bot to the processing of personal data (152-ФЗ).
+    consent_given_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # The player they are linked to by the phone they shared; one Telegram account per player.
+    player_id: Mapped[int | None] = mapped_column(ForeignKey("players.id"), unique=True)
+    # The club whose tournaments the bot shows them.
+    club_id: Mapped[int | None] = mapped_column(ForeignKey("clubs.id"))
+
+    player: Mapped[Player | None] = relationship()
+    club: Mapped[Club | None] = relationship()
 
 
 class Transaction(Base):

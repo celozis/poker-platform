@@ -39,9 +39,15 @@ We're building a system to replace manual tournament management (spreadsheets, c
 
 **Player**: A person who plays tournaments. Has a profile (phone, name, Telegram/VK ID), status (Guest → Regular → VIP, per ЮДС loyalty system), and rating. One player per phone number across the whole league: a person who plays in several clubs is the same player everywhere (ADR-0005).
 
-**Club Player List**: The players who have been to a club. An admin sees, searches and registers only their own club's players. Entering a phone the league already knows adds that player to the club instead of creating a second one; the existing name is kept.
+**Club Player List**: The players who have been to a club or chose it as their club in the bot. An admin sees, searches and registers only their own club's players. Entering a phone the league already knows adds that player to the club instead of creating a second one; the existing name is kept.
 
-**Consent (согласие на обработку персональных данных)**: The player's agreement to the processing of personal data under 152-ФЗ. The admin ticks it when adding a player; without it no player is added.
+**Consent (согласие на обработку персональных данных)**: The player's agreement to the processing of personal data under 152-ФЗ. The admin ticks it when adding a player; without it no player is added. In the bot the player gives it themselves, before anything else; without it the bot goes no further.
+
+**Telegram Link (привязка Telegram)**: A player's Telegram account tied to their player by the phone they share with the bot. Only the user's own contact counts, as Telegram confirms that number is theirs. A phone the league knows links to that player, keeping the name the club typed; a new phone makes a new player named as in Telegram. One Telegram account per player: the account that last shared the phone.
+
+**Player's Club (in the bot)**: The club the player chose in the bot: the bot shows its schedule, and the player joins its Club Player List. The player can change it (`/club`).
+
+**Schedule (расписание)**: A club's tournaments that have not started and are not cancelled, the ten soonest, with date, time (league time) and buy-in. One the admin has neither started nor cancelled drops out once its check-in closes, 12 hours after its start.
 
 **Status**: Player's loyalty tier (auto-calculated from number of games, ЮДС integration). Affects discount on buy-in.
 
@@ -146,7 +152,7 @@ _Avoid_: Payment record, entry (for the money)
 
 ### Tech Terms
 
-**Telegram Bot**: Mini-app inside Telegram for player registration and rating check. Primary entry point for players.
+**Telegram Bot**: The players' entry point in Telegram: consent, Telegram Link, the player's club and its schedule (`/start`, `/schedule`, `/club`); signing up for tournaments, rating and reminders come next. Answers private chats only.
 
 **Web Cabinet (ЛК)**: Web-based personal account. Player sees their profile, history, rating. Login via phone/VK/Telegram.
 
@@ -168,7 +174,7 @@ _Avoid_: Tabletop
 **Layers:**
 
 - **Backend API** (FastAPI, Python): Manages tournaments, players, ratings, cash. Exposes REST + WebSocket.
-- **Telegram Bot** (aiogram, Python): Primary player entry point.
+- **Telegram Bot** (aiogram, Python): Primary player entry point. The `bot` service runs the backend's code (`app/bot/`) by long polling and works with the database directly; where each player has got to is stored in `telegram_users`, so a restart loses nothing (ADR-0010).
 - **Web Frontend** (React, TS): Admin Panel, Player Cabinet, Dealer Cabinet, Hall Board (`/board/<board token>`).
 - **Database** (PostgreSQL): Multi-tenant via shared tables with a `club_id` column; access is enforced by the `AdminClub` dependency on every `/api/clubs/{club_id}/...` route (ADR-0003). Accessed via SQLAlchemy 2 with sync sessions (ADR-0002); Alembic migrations run automatically on backend start.
 - **Players**: League-wide `players` (one per phone), each club's list in `club_players`, and `registrations` of a club's players for its tournaments (ADR-0005).
@@ -215,7 +221,7 @@ _Avoid_: Tabletop
 Requires Docker (Docker Desktop on Windows/macOS). Repo layout: `backend/` (FastAPI + Alembic), `frontend/` (React + Vite), `docker-compose.yml` at the root.
 
 ```bash
-# Start everything: PostgreSQL, backend (applies migrations on start), frontend
+# Start everything: PostgreSQL, backend (applies migrations on start), frontend, Telegram bot
 docker compose up --build
 ```
 
@@ -276,7 +282,15 @@ docker compose run --rm backend alembic upgrade head
 
 CI (GitHub Actions, `.github/workflows/ci.yml`) runs backend mypy + pytest against a PostgreSQL service container and frontend typecheck + tests on every push.
 
-The Telegram bot (aiogram) is not part of the skeleton yet.
+### Telegram bot
+
+The `bot` service starts with the rest once the backend is healthy (migrations applied). It needs a token: create a bot with @BotFather in Telegram and put it in a `.env` file at the repo root (git-ignored):
+
+```bash
+TELEGRAM_BOT_TOKEN=123456789:AA...
+```
+
+Then `docker compose up -d bot` (or `docker compose restart bot` after changing the bot's code: unlike the backend it does not reload by itself). Without a token the bot logs how to get one and stops. Watch it with `docker compose logs -f bot`. One bot process per token: Telegram gives the updates to one polling process only.
 
 ---
 
@@ -289,5 +303,5 @@ The Telegram bot (aiogram) is not part of the skeleton yet.
 
 ---
 
-**Last updated**: 2026-09-27  
+**Last updated**: 2026-09-29  
 **Owner**: Matt Getsov

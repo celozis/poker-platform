@@ -2,10 +2,12 @@
 the players who have been to it (ClubPlayer). An admin only ever sees their club's list (ADR-0003)."""
 
 import re
+from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, Response, status
 from sqlalchemy import ColumnElement, or_, select
 from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.orm import Session
 
 from app.auth import DbSession, Now, normalize_phone
 from app.clubs import AdminClub
@@ -60,6 +62,33 @@ def list_players(club: AdminClub, session: DbSession, q: str = "") -> list[Playe
     return [PlayerOut.model_validate(player) for player in session.scalars(statement)]
 
 
+def league_player(
+    session: Session, name: str, phone: str, consent_given_at: datetime
+) -> tuple[Player, bool]:
+    """The league's player with this phone, and whether they have just been created. One player
+    per phone across the league: a known phone gives the existing player, keeping their name
+    (ADR-0005). ON CONFLICT also covers the same phone being added twice at once."""
+    created = session.scalar(
+        insert(Player)
+        .values(name=name, phone=phone, consent_given_at=consent_given_at)
+        .on_conflict_do_nothing(index_elements=[Player.phone])
+        .returning(Player.id)
+    )
+    player = session.scalars(select(Player).where(Player.phone == phone)).one()
+    return player, created is not None
+
+
+def add_to_club_list(session: Session, club_id: int, player: Player, now: datetime) -> bool:
+    """Puts the player on the club's player list; False when they were on it already."""
+    joined = session.scalar(
+        insert(ClubPlayer)
+        .values(club_id=club_id, player_id=player.id, added_at=now)
+        .on_conflict_do_nothing()
+        .returning(ClubPlayer.player_id)
+    )
+    return joined is not None
+
+
 @router.post("", status_code=status.HTTP_201_CREATED)
 def add_player(
     body: PlayerIn, club: AdminClub, session: DbSession, now: Now, response: Response
@@ -68,25 +97,13 @@ def add_player(
     errors = _player_errors(body, phone)
     if errors or phone is None:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, errors)
-    # One player per phone across the league: a known phone brings the existing player into
-    # the club, keeping their name. ON CONFLICT also covers two admins adding the same phone at once.
-    created = session.scalar(
-        insert(Player)
-        .values(name=body.name, phone=phone, consent_given_at=now)
-        .on_conflict_do_nothing(index_elements=[Player.phone])
-        .returning(Player.id)
-    )
-    player = session.scalars(select(Player).where(Player.phone == phone)).one()
-    joined = session.scalar(
-        insert(ClubPlayer)
-        .values(club_id=club.id, player_id=player.id, added_at=now)
-        .on_conflict_do_nothing()
-        .returning(ClubPlayer.player_id)
-    )
+    # A phone the league knows brings the existing player into the club.
+    player, created = league_player(session, body.name, phone, consent_given_at=now)
+    joined = add_to_club_list(session, club.id, player, now)
     session.commit()
-    if created is None:
+    if not created:
         response.status_code = status.HTTP_200_OK
     outcome: AddPlayerOutcome = (
-        "created" if created is not None else "added_to_club" if joined is not None else "already_in_club"
+        "created" if created else "added_to_club" if joined else "already_in_club"
     )
     return PlayerAdded(player=PlayerOut.model_validate(player), outcome=outcome)
