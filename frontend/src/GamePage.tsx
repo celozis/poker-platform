@@ -24,6 +24,7 @@ import { paidFor } from "./payments";
 import { entries, pointsText } from "./points";
 import { SignUp } from "./RegistrationsPage";
 import { STATUS_NAMES } from "./tournamentStatus";
+import { useTournamentChanges } from "./useTournamentChanges";
 
 type Loaded = { game: GameState; receivedAt: number };
 
@@ -70,6 +71,8 @@ export default function GamePage({
   }, [club.id, tournament.id]);
 
   useEffect(load, [load]);
+  // A latecomer who signs up in the Telegram bot shows up at once among those waiting.
+  useTournamentChanges(club.id, tournament.id, load);
 
   /** Runs an action and shows the game the server answers with; a refusal is shown on top. */
   async function change(action: () => Promise<GameState>) {

@@ -161,6 +161,10 @@ class Registration(Base):
     # can correct, and the rating points for it (app/points.py). finish_order stays as it was.
     place: Mapped[int | None]
     points: Mapped[int | None]
+    # When the Telegram bot reminded the player of the tournament and sent them their result
+    # (app/bot/notifications.py), so that each is sent once.
+    reminded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    result_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     player: Mapped[Player] = relationship()
 

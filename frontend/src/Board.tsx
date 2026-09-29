@@ -11,11 +11,10 @@ import {
 } from "./blindClock";
 import { startFormat } from "./dates";
 import LeagueBrand from "./LeagueBrand";
+import { reconnectDelay } from "./sockets";
 
 type Shown = { board: BoardState; receivedAt: number };
 
-// A lost connection is tried again soon, then less often while the server stays away.
-const RECONNECT_DELAYS_MS = [1000, 2000, 5000, 10000];
 // The code the server closes the connection with when it has no board with this secret code.
 const BOARD_NOT_FOUND = 4404;
 
@@ -63,8 +62,7 @@ function useBoard(token: string) {
           return;
         }
         setOffline(true);
-        const delay = RECONNECT_DELAYS_MS[Math.min(failures++, RECONNECT_DELAYS_MS.length - 1)];
-        retry = setTimeout(connect, delay);
+        retry = setTimeout(connect, reconnectDelay(failures++));
       };
     }
 

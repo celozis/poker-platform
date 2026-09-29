@@ -13,6 +13,7 @@ import type {
   TournamentResult,
   Transaction,
 } from "../api";
+import { FakeWebSocket } from "./fakeWebSocket";
 
 export const ME = {
   admin: { id: 1, name: "Анна Соколова", phone: "+79990000001" },
@@ -218,6 +219,8 @@ export function fakeBackend({
       }
       const registration: Registration = { player, status: "registered" };
       list.push(registration);
+      // In a started tournament the player waits to be seated, as a latecomer does.
+      played[tournamentId]?.waiting.push(registration);
       return json(registration, 201);
     }
     const [, playerId, checkIn] = rest.match(/^\/(\d+)(\/check-in)?$/) ?? [];
@@ -466,5 +469,8 @@ export function fakeBackend({
     return json({ detail: "Not Found" }, 404);
   });
   vi.stubGlobal("fetch", fetch);
+  // No page under test reaches for a real server over a WebSocket either; fakeWebSockets() gives
+  // a test the sockets the page opens.
+  vi.stubGlobal("WebSocket", FakeWebSocket);
   return fetch;
 }

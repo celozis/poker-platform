@@ -5,12 +5,12 @@ from datetime import datetime
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from app import realtime
 from app.auth import CurrentAdmin, DbSession, Now
 from app.clubs import AdminClub
-from app.models import Club, Tournament
+from app.models import Club, Registration, Tournament
 from app.schemas import TournamentIn, TournamentList, TournamentOut
 from app.tournament_rules import tournament_errors
 from app.transactions import give_buy_ins_back
@@ -86,10 +86,18 @@ def update_tournament(
         raise HTTPException(status.HTTP_409_CONFLICT, "Турнир уже начался, его нельзя изменить")
     if tournament.status == "cancelled":
         raise HTTPException(status.HTTP_409_CONFLICT, "Турнир отменён, его нельзя изменить")
+    starts_at = tournament.starts_at
     for field, value in _checked(body, now).items():
         setattr(tournament, field, value)
+    if tournament.starts_at != starts_at:
+        # The players are reminded again, of the new time (app/bot/notifications.py).
+        session.execute(
+            update(Registration)
+            .where(Registration.tournament_id == tournament.id)
+            .values(reminded_at=None)
+        )
+    realtime.tournament_changed(session, tournament.id)
     session.commit()
-    realtime.tournament_changed(tournament.id)
     return TournamentOut.model_validate(tournament)
 
 
@@ -103,6 +111,6 @@ def cancel_tournament(
         raise HTTPException(status.HTTP_409_CONFLICT, "Турнир уже начался, его нельзя отменить")
     tournament.status = "cancelled"
     give_buy_ins_back(session, tournament, admin, now)
+    realtime.tournament_changed(session, tournament.id)
     session.commit()
-    realtime.tournament_changed(tournament.id)
     return TournamentOut.model_validate(tournament)

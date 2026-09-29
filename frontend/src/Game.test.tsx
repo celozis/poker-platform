@@ -3,7 +3,8 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
 import type { GameState } from "./api";
-import { aGame, aPlayer, aSeat, aTournament, fakeBackend } from "./testing/fakeBackend";
+import { aGame, aPlayer, aSeat, aTournament, fakeBackend, ME } from "./testing/fakeBackend";
+import { fakeWebSockets } from "./testing/fakeWebSocket";
 
 afterEach(() => {
   vi.useRealTimers();
@@ -338,5 +339,28 @@ describe("running a tournament", () => {
 
     const sent = fetch.mock.calls.filter(([url]) => String(url).endsWith("/next-level"));
     expect(sent).toHaveLength(1);
+  });
+
+  it("shows a player who signed up in the Telegram bot during late registration without reloading", async () => {
+    const sockets = fakeWebSockets();
+    await openGame(
+      running({
+        in_game: [aSeat(IVAN, 1, 1), aSeat(MARIA, 1, 2)],
+        windows: { reentry: false, addon: false, late_registration: true },
+      }),
+    );
+    expect(sockets.map((socket) => socket.url)).toEqual([
+      `ws://localhost:3000/api/clubs/${ME.club.id}/tournaments/${FRIDAY.id}/ws`,
+    ]);
+    act(() => sockets[0].open());
+
+    await fetch(`/api/clubs/${ME.club.id}/tournaments/${FRIDAY.id}/registrations`, {
+      method: "POST",
+      body: JSON.stringify({ player_id: PETR.id }),
+    });
+    act(() => sockets[0].signalChange());
+
+    const waiting = await screen.findByRole("list", { name: "Ждут посадки" });
+    expect(within(waiting).getByRole("listitem", { name: "Пётр Сидоров" })).toBeInTheDocument();
   });
 });

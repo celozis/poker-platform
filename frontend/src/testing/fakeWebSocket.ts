@@ -1,7 +1,8 @@
 import { vi } from "vitest";
 import type { BoardState } from "../api";
 
-/** A stand-in for the browser's WebSocket: the test opens it, sends it boards and drops it. */
+/** A stand-in for the browser's WebSocket: the test opens it, sends it boards or signals and
+ * drops it. */
 export class FakeWebSocket {
   static sockets: FakeWebSocket[] = [];
 
@@ -20,15 +21,20 @@ export class FakeWebSocket {
     this.closedByPage = true;
   }
 
-  /** The server accepts the connection and sends the board as it is now. */
-  open(board: BoardState) {
+  /** The server accepts the connection and sends the board as it is now, if it is a board's. */
+  open(board?: BoardState) {
     this.onopen?.();
-    this.send(board);
+    if (board) this.send(board);
   }
 
   /** The server sends the board after a change. */
   send(board: BoardState) {
     this.onmessage?.({ data: JSON.stringify(board) });
+  }
+
+  /** The server says the tournament has changed, as it does to the admin panel. */
+  signalChange() {
+    this.onmessage?.({ data: "changed" });
   }
 
   /** The connection is lost: the network went down or the backend restarted. */

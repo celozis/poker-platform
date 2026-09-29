@@ -7,14 +7,22 @@ from collections.abc import Callable
 from datetime import datetime
 from typing import Concatenate
 
-from aiogram import Dispatcher, F, Router
+from aiogram import Bot, Dispatcher, F, Router
 from aiogram.enums import ChatType
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command, CommandStart
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
 from sqlalchemy.orm import Session
 
 from app.bot import conversation
-from app.bot.conversation import ClubChoice, ConsentAnswer, Reply
+from app.bot.conversation import (
+    ClubChoice,
+    ConsentAnswer,
+    DropOutRequest,
+    Reply,
+    ScheduleChange,
+    SignUpRequest,
+)
 from app.db import SessionLocal
 from app.models import TelegramUser
 
@@ -22,16 +30,16 @@ from app.models import TelegramUser
 TimeSource = Callable[[], datetime]
 
 
-async def _run_step[**P](
-    step: Callable[Concatenate[Session, TelegramUser, P], list[Reply]],
+async def _run_step[**P, R](
+    step: Callable[Concatenate[Session, TelegramUser, P], R],
     telegram_id: int,
     *args: P.args,
     **kwargs: P.kwargs,
-) -> list[Reply]:
+) -> R:
     """Runs a step of the conversation for the Telegram user in its own session and commits it.
     In a thread: the database code is sync (ADR-0002) and must not hold up the bot's other chats."""
 
-    def run() -> list[Reply]:
+    def run() -> R:
         with SessionLocal() as session:
             replies = step(session, conversation.telegram_user(session, telegram_id), *args, **kwargs)
             session.commit()
@@ -83,8 +91,67 @@ async def on_club_chosen(
     await _answer_button(callback, replies)
 
 
+async def _shown_in_place(message: Message | None, schedule: Reply | None) -> bool:
+    """Shows the schedule afresh in place of the message the button was pressed under, or takes
+    the buttons off it when there is no schedule. False when Telegram no longer lets the message
+    be edited: it is too old or gone."""
+    if message is None:
+        return False
+    try:
+        if schedule is None:
+            await message.edit_reply_markup(reply_markup=None)
+        else:
+            # A message keeps only inline buttons, the only ones a schedule has.
+            markup = schedule.markup
+            await message.edit_text(
+                schedule.text,
+                reply_markup=markup if isinstance(markup, InlineKeyboardMarkup) else None,
+            )
+    except TelegramBadRequest as error:
+        # Telegram refuses an edit that changes nothing, as when a button is pressed twice.
+        return "message is not modified" in error.message
+    return True
+
+
+async def _answer_schedule_button(
+    callback: CallbackQuery, bot: Bot, change: ScheduleChange
+) -> None:
+    """Answers a button under the schedule: the schedule is shown afresh in its place, so its
+    buttons stay right, and the replies follow. The change is made already, so the replies go
+    whatever happens to the old message; the schedule then comes as a new one."""
+    await callback.answer()
+    message = callback.message if isinstance(callback.message, Message) else None
+    replies = change.replies
+    if not await _shown_in_place(message, change.schedule) and change.schedule is not None:
+        replies = [*replies, change.schedule]
+    for reply in replies:
+        await bot.send_message(callback.from_user.id, reply.text, reply_markup=reply.markup)
+
+
+async def on_sign_up(
+    callback: CallbackQuery, callback_data: SignUpRequest, bot: Bot, clock: TimeSource
+) -> None:
+    change = await _run_step(
+        conversation.sign_up, callback.from_user.id, callback_data.tournament_id, clock()
+    )
+    await _answer_schedule_button(callback, bot, change)
+
+
+async def on_drop_out(
+    callback: CallbackQuery, callback_data: DropOutRequest, bot: Bot, clock: TimeSource
+) -> None:
+    change = await _run_step(
+        conversation.drop_out, callback.from_user.id, callback_data.tournament_id, clock()
+    )
+    await _answer_schedule_button(callback, bot, change)
+
+
 async def on_schedule(message: Message, clock: TimeSource) -> None:
     await _send(message, await _run_step(conversation.schedule, message.chat.id, clock()))
+
+
+async def on_rating(message: Message, clock: TimeSource) -> None:
+    await _send(message, await _run_step(conversation.rating, message.chat.id, clock()))
 
 
 async def on_club(message: Message) -> None:
@@ -103,9 +170,12 @@ def create_dispatcher(clock: TimeSource) -> Dispatcher:
     router.message.filter(F.chat.type == ChatType.PRIVATE)
     router.message.register(on_start, CommandStart())
     router.message.register(on_schedule, Command("schedule"))
+    router.message.register(on_rating, Command("rating"))
     router.message.register(on_club, Command("club"))
     router.callback_query.register(on_consent, ConsentAnswer.filter())
     router.callback_query.register(on_club_chosen, ClubChoice.filter())
+    router.callback_query.register(on_sign_up, SignUpRequest.filter())
+    router.callback_query.register(on_drop_out, DropOutRequest.filter())
     router.message.register(on_contact, F.contact)
     # Last: whatever no handler above takes.
     router.message.register(on_anything_else)

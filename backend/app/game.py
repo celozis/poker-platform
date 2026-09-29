@@ -209,9 +209,10 @@ def _state(session: DbSession, tournament: Tournament, now: datetime) -> GameSta
 
 
 def _saved(session: DbSession, tournament: Tournament, now: datetime) -> GameState:
-    """Commits the change, tells the hall board of it and answers with the game."""
+    """Commits the change, tells its watchers (the hall board, the admin panel) of it and
+    answers with the game."""
+    realtime.tournament_changed(session, tournament.id)
     session.commit()
-    realtime.tournament_changed(tournament.id)
     return _state(session, tournament, now)
 
 

@@ -23,11 +23,19 @@ from sqlalchemy import select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
+from app import realtime
 from app.auth import normalize_phone
-from app.models import Club, TelegramUser, Tournament
+from app.game import late_registration_closed_because
+from app.models import Club, Registration, TelegramUser, Tournament
 from app.players import add_to_club_list, league_player
-from app.registrations import CHECK_IN_WINDOW
-from app.seasons import LEAGUE_TIME
+from app.registrations import (
+    CHECK_IN_WINDOW,
+    dropping_out_closed_because,
+    find_registration,
+    registration_closed_because,
+)
+from app.rating import club_standings
+from app.seasons import LEAGUE_TIME, season_at
 
 GREETING = (
     "Здравствуйте! Это бот Сибирской лиги покера. "
@@ -72,6 +80,18 @@ class ClubChoice(CallbackData, prefix="club"):
     """What a pressed club button sends back."""
 
     club_id: int
+
+
+class SignUpRequest(CallbackData, prefix="sign_up"):
+    """What a pressed sign-up button under the schedule sends back."""
+
+    tournament_id: int
+
+
+class DropOutRequest(CallbackData, prefix="drop_out"):
+    """What a pressed drop-out button under the schedule sends back."""
+
+    tournament_id: int
 
 
 @dataclass(frozen=True)
@@ -206,36 +226,208 @@ def choose_club(
     return [Reply(f"Ваш клуб: {club.name}. Расписание его турниров: /schedule")]
 
 
-def _date_and_time(moment: datetime) -> str:
+def date_and_time(moment: datetime) -> str:
     """"пт 2 октября, 19:30", in the league's time: the clubs have no time zone of their own yet."""
     local = moment.astimezone(LEAGUE_TIME)
     return f"{WEEKDAYS[local.weekday()]} {local.day} {MONTHS[local.month - 1]}, {local:%H:%M}"
 
 
-def _roubles(amount: int) -> str:
+def _short_date(moment: datetime) -> str:
+    """"3.10", in the league's time: a button has room for little more than the name."""
+    local = moment.astimezone(LEAGUE_TIME)
+    return f"{local.day}.{local.month:02}"
+
+
+def roubles(amount: int) -> str:
     return f"{amount:,}".replace(",", " ") + " ₽"
 
 
-def schedule(session: Session, user: TelegramUser, now: datetime) -> list[Reply]:
-    """The tournaments of the player's club that have not started yet, the soonest first. One the
-    admin has neither started nor cancelled goes once the player can no longer come to it: its
-    check-in closes CHECK_IN_WINDOW after its start."""
-    if user.club is None:
-        return current_step(session, user)
-    tournaments = session.scalars(
+def _schedule(session: Session, user: TelegramUser, club: Club, now: datetime) -> Reply:
+    """The club's tournaments a player can still sign up for, the soonest first, each with a button
+    to sign up or, for one the player is signed up for, to drop out: those that have not started
+    yet, and those going on while their late registration is open. One the admin has neither
+    started nor cancelled goes once the player can no longer come to it: its check-in closes
+    CHECK_IN_WINDOW after its start."""
+    coming = session.scalars(
         select(Tournament)
         .where(
-            Tournament.club_id == user.club.id,
+            Tournament.club_id == club.id,
             Tournament.status == "scheduled",
             Tournament.starts_at >= now - CHECK_IN_WINDOW,
         )
         .order_by(Tournament.starts_at, Tournament.id)
         .limit(SCHEDULE_LENGTH)
-    )
-    lines = [
-        f"{_date_and_time(t.starts_at)} — {t.name}, бай-ин {_roubles(t.buy_in)}"
-        for t in tournaments
+    ).all()
+    live = [
+        t
+        for t in session.scalars(
+            select(Tournament).where(
+                Tournament.club_id == club.id,
+                Tournament.status.in_(["running", "paused"]),
+                Tournament.late_registration_until_level.is_not(None),
+            )
+        )
+        if late_registration_closed_because(t, now) is None
     ]
-    if not lines:
-        return [Reply(f"У клуба {user.club.name} пока нет запланированных турниров.")]
-    return [Reply("\n".join([f"{user.club.name}, ближайшие турниры:", *lines]))]
+    tournaments = sorted([*live, *coming], key=lambda t: (t.starts_at, t.id))[:SCHEDULE_LENGTH]
+    if not tournaments:
+        return Reply(f"У клуба {club.name} пока нет запланированных турниров.")
+    # The player's registrations for these tournaments: whether they have come, by tournament.
+    came = {
+        tournament_id: checked_in_at
+        for tournament_id, checked_in_at in session.execute(
+            select(Registration.tournament_id, Registration.checked_in_at).where(
+                Registration.player_id == user.player_id,
+                Registration.tournament_id.in_([t.id for t in tournaments]),
+            )
+        )
+    }
+    lines = [f"{club.name}, ближайшие турниры:"]
+    buttons = []
+    for t in tournaments:
+        line = f"{date_and_time(t.starts_at)} — {t.name}, бай-ин {roubles(t.buy_in)}"
+        if t.is_live:
+            line += f" — идёт, поздняя регистрация до уровня {t.late_registration_until_level}"
+        label = f"{_short_date(t.starts_at)} {t.name}"
+        if t.id not in came:
+            lines.append(line)
+            buttons.append(
+                [
+                    InlineKeyboardButton(
+                        text=f"Записаться: {label}",
+                        callback_data=SignUpRequest(tournament_id=t.id).pack(),
+                    )
+                ]
+            )
+            continue
+        lines.append(f"{line} — вы записаны")
+        # Once it has started, or once the player has come and paid, only the admin takes them off.
+        if not t.is_live and came[t.id] is None:
+            buttons.append(
+                [
+                    InlineKeyboardButton(
+                        text=f"Отменить запись: {label}",
+                        callback_data=DropOutRequest(tournament_id=t.id).pack(),
+                    )
+                ]
+            )
+    return Reply(
+        "\n".join(lines), InlineKeyboardMarkup(inline_keyboard=buttons) if buttons else None
+    )
+
+
+def schedule(session: Session, user: TelegramUser, now: datetime) -> list[Reply]:
+    if user.club is None:
+        return current_step(session, user)
+    return [_schedule(session, user, user.club, now)]
+
+
+@dataclass(frozen=True)
+class ScheduleChange:
+    """What a sign-up or drop-out button under the schedule answers: the replies, and the schedule
+    as it is now, to be shown in place of the one the button was pressed under. No schedule when
+    the player has not got that far."""
+
+    replies: list[Reply]
+    schedule: Reply | None = None
+
+
+def _with_schedule(
+    session: Session, user: TelegramUser, now: datetime, *replies: Reply
+) -> ScheduleChange:
+    if user.club is None:
+        return ScheduleChange(current_step(session, user))
+    return ScheduleChange(list(replies), _schedule(session, user, user.club, now))
+
+
+def sign_up(
+    session: Session, user: TelegramUser, tournament_id: int, now: datetime
+) -> ScheduleChange:
+    """Registers the player for a tournament of their club, by the rules the admin panel keeps:
+    until the start, or afterwards while late registration is open, and once."""
+    if user.player is None or user.club is None:
+        return ScheduleChange(current_step(session, user))
+    tournament = session.get(Tournament, tournament_id, with_for_update=True)
+    if tournament is None or tournament.club_id != user.club.id:
+        return _with_schedule(session, user, now, Reply("Это турнир не вашего клуба."))
+    closed = registration_closed_because(tournament, now)
+    if closed:
+        return _with_schedule(session, user, now, Reply(closed))
+    # The tournament row is locked, so a second press at once waits here and finds this one.
+    if find_registration(session, tournament.id, user.player.id) is not None:
+        return _with_schedule(
+            session, user, now, Reply(f"Вы уже записаны на турнир «{tournament.name}».")
+        )
+    session.add(
+        Registration(
+            club_id=tournament.club_id,
+            tournament_id=tournament.id,
+            player_id=user.player.id,
+            registered_at=now,
+        )
+    )
+    session.flush()
+    # The admin panel shows the player at once, although the bot is a process of its own.
+    realtime.tournament_changed(session, tournament.id)
+    signed = Reply(
+        f"Вы записаны на турнир «{tournament.name}», {date_and_time(tournament.starts_at)}. "
+        "Бай-ин оплачивается в клубе, когда придёте."
+    )
+    return _with_schedule(session, user, now, signed)
+
+
+def drop_out(
+    session: Session, user: TelegramUser, tournament_id: int, now: datetime
+) -> ScheduleChange:
+    """Takes the player off a tournament before its start. Not once they have come and paid the
+    buy-in: giving it back is the admin's, in the club."""
+    if user.player is None:
+        return ScheduleChange(current_step(session, user))
+    tournament = session.get(Tournament, tournament_id, with_for_update=True)
+    registration = (
+        None if tournament is None else find_registration(session, tournament.id, user.player.id)
+    )
+    if tournament is None or registration is None:
+        return _with_schedule(session, user, now, Reply("Вы не записаны на этот турнир."))
+    closed = dropping_out_closed_because(tournament)
+    if closed:
+        return _with_schedule(session, user, now, Reply(closed))
+    if registration.checked_in_at is not None:
+        paid = Reply(
+            "Вы уже отметились в клубе и оплатили бай-ин: "
+            "снять запись и вернуть деньги может администратор клуба."
+        )
+        return _with_schedule(session, user, now, paid)
+    session.delete(registration)
+    session.flush()
+    realtime.tournament_changed(session, tournament.id)
+    return _with_schedule(session, user, now, Reply(f"Запись на турнир «{tournament.name}» отменена."))
+
+
+# The club rating's first rows the bot shows: one message, easy to read on a phone.
+RATING_TOP = 10
+
+
+def rating(session: Session, user: TelegramUser, now: datetime) -> list[Reply]:
+    """The player's position and points in their club's rating of the current season, and the
+    club's top ten, as the admin panel's club rating has them."""
+    if user.player is None or user.club is None:
+        return current_step(session, user)
+    season = season_at(now)
+    standings = club_standings(session, user.club.id, season.starts_at, season.ends_at)
+    title = f"Рейтинг клуба {user.club.name}, {season.name}"
+    if not standings:
+        return [Reply(f"{title}\nВ этом сезоне турниры клуба ещё не завершались, рейтинг пуст.")]
+    own = next((row for row in standings if row.player.id == user.player.id), None)
+    position = (
+        "Вас пока нет в рейтинге: сыграйте в турнире клуба в этом сезоне."
+        if own is None
+        else f"Ваше место: {own.position}, очков: {own.points}, турниров: {own.tournaments}"
+    )
+    # Everyone sharing the last position shown is shown.
+    top = [
+        f"{row.position}. {row.player.name} — {row.points}"
+        for row in standings
+        if row.position <= RATING_TOP
+    ]
+    return [Reply("\n".join([title, position, "", f"Топ-{RATING_TOP}:", *top]))]

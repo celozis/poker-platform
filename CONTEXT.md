@@ -47,11 +47,11 @@ We're building a system to replace manual tournament management (spreadsheets, c
 
 **Player's Club (in the bot)**: The club the player chose in the bot: the bot shows its schedule, and the player joins its Club Player List. The player can change it (`/club`).
 
-**Schedule (расписание)**: A club's tournaments that have not started and are not cancelled, the ten soonest, with date, time (league time) and buy-in. One the admin has neither started nor cancelled drops out once its check-in closes, 12 hours after its start.
+**Schedule (расписание)**: A club's tournaments a player can still sign up for, the ten soonest, with date, time (league time) and buy-in: those that have not started and are not cancelled, and those going on while their Late Registration is open (marked as going on). One the admin has neither started nor cancelled drops out once its check-in closes, 12 hours after its start. Each has a button to sign up or, once signed up (marked in the schedule), to drop out; no drop-out button once the tournament is going on or the player has come.
 
 **Status**: Player's loyalty tier (auto-calculated from number of games, ЮДС integration). Affects discount on buy-in.
 
-**Registration**: A club player signed up for a tournament, at most once per tournament. States: Registered → Checked In → In Game (seated) → Out (finished with a place). Players sign up until the tournament is started, however late that is, and afterwards only during Late Registration; they drop out only before the start.
+**Registration**: A club player signed up for a tournament, at most once per tournament. States: Registered → Checked In → In Game (seated) → Out (finished with a place). Players sign up until the tournament is started, however late that is, and afterwards only during Late Registration; they drop out only before the start. The admin registers them, or they sign up themselves in the bot, by the same rules; in the bot a player who has come (checked in, so paid) cannot drop out: the admin gives the buy-in back.
 
 **Check-in**: Marking on the day that a registered player has come to the club; the player pays the buy-in then. Open from 12 hours before the tournament's start time to 12 hours after it, and closed once the tournament is started: a player who comes later is seated through Late Registration, which checks them in. A mistaken check-in can be taken back while check-in is open, which gives the buy-in back by a storno. Clubs have no time zone yet, which is why this is a window around the start rather than a calendar day.
 
@@ -107,7 +107,7 @@ _Avoid_: Edit result, override
 
 **Rating**: A player's cumulative score across tournaments. Calculated from places (1st = most points, out = 0) and bounties (KO format; not yet).
 
-**Club Rating**: The points each player has scored in the club's finished tournaments of a season, added up; the most first, and equal points share a position. Only the club's own tournaments count. Worked out on every request, so a place correction shows at once.
+**Club Rating**: The points each player has scored in the club's finished tournaments of a season, added up; the most first, and equal points share a position. Only the club's own tournaments count. Worked out on every request, so a place correction shows at once. In the bot (`/rating`) a player sees their position and points in the current season and the club's top ten.
 
 **Rating Level**: Hierarchical: Club Rating → City Rating → Russia/CIS Rating. Separate leaderboards.
 
@@ -152,7 +152,11 @@ _Avoid_: Payment record, entry (for the money)
 
 ### Tech Terms
 
-**Telegram Bot**: The players' entry point in Telegram: consent, Telegram Link, the player's club and its schedule (`/start`, `/schedule`, `/club`); signing up for tournaments, rating and reminders come next. Answers private chats only.
+**Telegram Bot**: The players' entry point in Telegram: consent, Telegram Link, the player's club and its schedule with signing up and dropping out, the club rating (`/start`, `/schedule`, `/rating`, `/club`), and the Reminder and Result Notice it sends by itself. Answers private chats only.
+
+**Reminder (напоминание)**: The bot's message to a registered player whose Telegram is linked, a set time before the tournament's start (`BOT_REMINDER_MINUTES`, two hours unless set): which tournament, when, the buy-in to bring, and how to drop out. Sent once, and only to those who registered before that time and have not come yet: one who signs up at the last moment, or is already at the club, needs no reminder. None for a tournament started or cancelled meanwhile; a tournament moved to another start is reminded of again.
+
+**Result Notice**: The bot's message to a player whose Telegram is linked once their tournament has finished: their place of how many and the points it gives in the club rating. Sent once, and only for a tournament finished within the last day, so a player who links their Telegram later is not sent old results. A place corrected afterwards is not sent again.
 
 **Web Cabinet (ЛК)**: Web-based personal account. Player sees their profile, history, rating. Login via phone/VK/Telegram.
 
@@ -165,7 +169,7 @@ _Avoid_: Tabletop
 
 **Board Link**: `/board/<board token>`, the address of a tournament's hall board. The board token (`board_token` in code) is twelve random characters, so the link cannot be guessed from the tournament's number. The admin sees the link on the tournament's running page.
 
-**WebSocket**: Real-time sync from the backend to the Hall Board (later also the bot): after every change the board is sent afresh.
+**WebSocket**: Real-time sync from the backend to the Hall Board, where after every change the board is sent afresh, and to the Admin Panel's registrations and running pages, which are sent just `changed` and read what they show afresh; a sign-up in the bot shows up there at once (ADR-0011).
 
 ---
 
@@ -181,7 +185,8 @@ _Avoid_: Tabletop
 - **Running a tournament**: the game lives in the tournament row (status, blind clock) and in its registrations (seat, finish order, re-entries, add-ons); the blind clock is worked out from the time, with no background job (ADR-0006).
 - **Cashier**: every paid action writes a row to `transactions` (`app/transactions.py`); a storno is another row pointing at the one it reverses. The cashier's summary and the CSV are worked out from the rows on every request (`app/cashier.py`, ADR-0009).
 - **Results and rating**: the last knock-out fixes every player's place and points in their registration; a place correction rewrites them. The club rating adds the points up per season on every request, with no table of its own (ADR-0008).
-- **Realtime**: after committing a change, the backend tells the tournament's watchers "it has changed" (`app/realtime.py`, in-process); each connected hall board reads the board afresh and gets it over its WebSocket. One backend process only for now (ADR-0007).
+- **Realtime**: a change of a tournament, in the backend or the bot, sends PostgreSQL `NOTIFY tournament_changed` in its own transaction, delivered once it commits; every backend process `LISTEN`s and wakes its watchers (`app/realtime.py`). Each connected hall board then reads the board afresh and gets it over its WebSocket (ADR-0007); an admin panel page gets `changed` over `/api/clubs/{club_id}/tournaments/{id}/ws` and reads afresh (ADR-0011).
+- **Bot notifications**: the bot process looks every 30 seconds for reminders and results due and sends them; each registration keeps when they were sent (`app/bot/notifications.py`, ADR-0011).
 - **Integrations**: iiko (cashier), ЮДС (loyalty), Telegram API, VK ID (auth).
 
 **MVP (Phase 1):**
@@ -290,7 +295,7 @@ The `bot` service starts with the rest once the backend is healthy (migrations a
 TELEGRAM_BOT_TOKEN=123456789:AA...
 ```
 
-Then `docker compose up -d bot` (or `docker compose restart bot` after changing the bot's code: unlike the backend it does not reload by itself). Without a token the bot logs how to get one and stops. Watch it with `docker compose logs -f bot`. One bot process per token: Telegram gives the updates to one polling process only.
+Then `docker compose up -d bot` (or `docker compose restart bot` after changing the bot's code: unlike the backend it does not reload by itself). Without a token the bot logs how to get one and stops. Watch it with `docker compose logs -f bot`. One bot process per token: Telegram gives the updates to one polling process only. How long before the start the bot reminds players is `BOT_REMINDER_MINUTES` in the same `.env` (120 unless set).
 
 ---
 

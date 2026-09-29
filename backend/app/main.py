@@ -1,4 +1,6 @@
 import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Annotated, Literal
 
 from fastapi import Depends, FastAPI
@@ -17,8 +19,10 @@ from app import (
     game,
     players,
     rating,
+    realtime,
     registrations,
     results,
+    tournament_changes,
     tournaments,
 )
 from app.db import get_session
@@ -33,7 +37,15 @@ if not _app_logger.handlers:
     _handler.setFormatter(logging.Formatter("%(levelname)s:     %(name)s - %(message)s"))
     _app_logger.addHandler(_handler)
 
-app = FastAPI(title="Poker Platform API")
+
+@asynccontextmanager
+async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    # Hears the changes of every process, the Telegram bot's too, for the live watchers.
+    with realtime.listening():
+        yield
+
+
+app = FastAPI(title="Poker Platform API", lifespan=lifespan)
 app.add_exception_handler(RequestValidationError, russian_validation_errors)
 app.include_router(auth.router)
 app.include_router(clubs.router)
@@ -46,6 +58,7 @@ app.include_router(board.router)
 app.include_router(results.router)
 app.include_router(rating.router)
 app.include_router(cashier.router)
+app.include_router(tournament_changes.router)
 
 
 class Health(BaseModel):

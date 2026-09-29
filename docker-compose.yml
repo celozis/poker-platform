@@ -51,6 +51,8 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://poker:poker@db:5432/poker
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      # How long before a tournament's start the bot reminds its registered players, in minutes.
+      BOT_REMINDER_MINUTES: ${BOT_REMINDER_MINUTES:-120}
     volumes:
       - ./backend:/app
     depends_on:

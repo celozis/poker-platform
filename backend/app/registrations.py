@@ -1,5 +1,6 @@
 """Players registered for a club tournament, and their check-in on the day. Once the tournament
-is running, players are seated and knocked out in app/game.py.
+is running, players are seated and knocked out in app/game.py. Every change is told to the
+tournament's watchers (app/realtime.py), such as the admin panel open on another screen.
 
 Club-scoped like everything under /api/clubs/{club_id} (ADR-0003): the tournament and the player
 are looked up only among the club's own."""
@@ -8,8 +9,9 @@ from datetime import datetime, timedelta
 
 from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import select
-from sqlalchemy.orm import contains_eager
+from sqlalchemy.orm import Session, contains_eager
 
+from app import realtime
 from app.auth import CurrentAdmin, DbSession, Now
 from app.clubs import AdminClub
 from app.game import late_registration_closed_because
@@ -33,7 +35,7 @@ CHECK_IN_HOURS = 12
 CHECK_IN_WINDOW = timedelta(hours=CHECK_IN_HOURS)
 
 
-def _registration_closed_because(tournament: Tournament, now: datetime) -> str | None:
+def registration_closed_because(tournament: Tournament, now: datetime) -> str | None:
     """Players sign up until the tournament is started, however late that is, and afterwards
     while its late registration is open."""
     if tournament.status == "cancelled":
@@ -45,7 +47,7 @@ def _registration_closed_because(tournament: Tournament, now: datetime) -> str |
     return None
 
 
-def _dropping_out_closed_because(tournament: Tournament) -> str | None:
+def dropping_out_closed_because(tournament: Tournament) -> str | None:
     if tournament.status == "cancelled":
         return "Турнир отменён, регистрация закрыта"
     if tournament.has_started:
@@ -76,7 +78,9 @@ def _club_player(session: DbSession, club: Club, player_id: int) -> Player:
     return player
 
 
-def _registration(session: DbSession, tournament_id: int, player_id: int) -> Registration | None:
+def find_registration(
+    session: Session, tournament_id: int, player_id: int
+) -> Registration | None:
     return session.scalar(
         select(Registration).where(
             Registration.tournament_id == tournament_id, Registration.player_id == player_id
@@ -97,8 +101,8 @@ def list_registrations(
         .order_by(Player.name, Player.id)
     ).all()
     return TournamentRegistrations(
-        registration_open=_registration_closed_because(tournament, now) is None,
-        drop_out_open=_dropping_out_closed_because(tournament) is None,
+        registration_open=registration_closed_because(tournament, now) is None,
+        drop_out_open=dropping_out_closed_because(tournament) is None,
         check_in_open=_check_in_closed_because(tournament, now) is None,
         registrations=[RegistrationOut.model_validate(r) for r in registrations]
     )
@@ -109,12 +113,12 @@ def register_player(
     tournament_id: int, body: RegistrationIn, club: AdminClub, session: DbSession, now: Now
 ) -> RegistrationOut:
     tournament = club_tournament(session, club, tournament_id, for_update=True)
-    closed = _registration_closed_because(tournament, now)
+    closed = registration_closed_because(tournament, now)
     if closed:
         raise HTTPException(status.HTTP_409_CONFLICT, closed)
     player = _club_player(session, club, body.player_id)
     # The tournament row is locked, so a parallel registration of the same player waits here.
-    if _registration(session, tournament.id, player.id) is not None:
+    if find_registration(session, tournament.id, player.id) is not None:
         raise HTTPException(
             status.HTTP_409_CONFLICT, f"{player.name} уже зарегистрирован на этот турнир"
         )
@@ -122,12 +126,13 @@ def register_player(
         club_id=club.id, tournament_id=tournament.id, player_id=player.id, registered_at=now
     )
     session.add(registration)
+    realtime.tournament_changed(session, tournament.id)
     session.commit()
     return RegistrationOut.model_validate(registration)
 
 
 def _registered(session: DbSession, tournament: Tournament, player_id: int) -> Registration:
-    registration = _registration(session, tournament.id, player_id)
+    registration = find_registration(session, tournament.id, player_id)
     if registration is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Игрок не зарегистрирован на этот турнир")
     return registration
@@ -144,11 +149,12 @@ def cancel_registration(
 ) -> Refund:
     """Takes the player off the tournament before the start, giving back a buy-in they paid."""
     tournament = club_tournament(session, club, tournament_id, for_update=True)
-    closed = _dropping_out_closed_because(tournament)
+    closed = dropping_out_closed_because(tournament)
     if closed:
         raise HTTPException(status.HTTP_409_CONFLICT, closed)
     session.delete(_registered(session, tournament, player_id))
     refunded = give_buy_ins_back(session, tournament, admin, now, player_id)
+    realtime.tournament_changed(session, tournament.id)
     session.commit()
     return Refund(refunded=refunded)
 
@@ -180,6 +186,7 @@ def check_in(
     if registration.checked_in_at is None:
         take_payment(session, tournament, player_id, "buy_in", payment, admin, now)
         registration.checked_in_at = now
+    realtime.tournament_changed(session, tournament.id)
     session.commit()
     return RegistrationOut.model_validate(registration)
 
@@ -200,6 +207,7 @@ def undo_check_in(
     if registration.checked_in_at is not None:
         refunded = give_buy_ins_back(session, tournament, admin, now, player_id)
         registration.checked_in_at = None
+    realtime.tournament_changed(session, tournament.id)
     session.commit()
     return CheckInUndone(
         **RegistrationOut.model_validate(registration).model_dump(), refunded=refunded

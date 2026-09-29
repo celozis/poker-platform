@@ -1,3 +1,5 @@
+import { socketUrl } from "./sockets";
+
 // Types mirror the response models in backend/app/schemas.py.
 export type Club = {
   id: number;
@@ -397,8 +399,12 @@ export async function fetchBoard(token: string): Promise<BoardState | null> {
 
 /** Where the hall board hears of every change: the board on connecting, then after each change. */
 export function boardSocketUrl(token: string): string {
-  const scheme = window.location.protocol === "https:" ? "wss" : "ws";
-  return `${scheme}://${window.location.host}/api/board/${token}/ws`;
+  return socketUrl(`/api/board/${token}/ws`);
+}
+
+/** Where the admin panel hears "changed" after every change of a tournament, the bot's too. */
+export function tournamentSocketUrl(clubId: number, tournamentId: number): string {
+  return socketUrl(`/api/clubs/${clubId}/tournaments/${tournamentId}/ws`);
 }
 
 /** A player's result in a finished tournament. */

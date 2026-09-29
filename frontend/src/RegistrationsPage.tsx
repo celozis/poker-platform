@@ -21,6 +21,7 @@ import { money, paidFor } from "./payments";
 import { formatPhone } from "./phones";
 import PlayerForm, { addedMessage } from "./PlayerForm";
 import { usePlayerSearch } from "./usePlayerSearch";
+import { useTournamentChanges } from "./useTournamentChanges";
 
 const REGISTRATION_STATUS_NAMES: Record<Registration["status"], string> = {
   registered: "Зарегистрирован",
@@ -59,6 +60,8 @@ export default function RegistrationsPage({
   }, [club.id, tournament.id]);
 
   useEffect(load, [load]);
+  // A player who signs up or drops out in the Telegram bot shows up at once.
+  useTournamentChanges(club.id, tournament.id, load);
 
   /** Runs a change and reloads the list; a refusal is shown above the list, and what the change
    * tells the admin, if anything, as a notice. */

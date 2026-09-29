@@ -1,8 +1,10 @@
-import { render, screen, within } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
-import { aPlayer, aTournament, fakeBackend } from "./testing/fakeBackend";
+import type { Player } from "./api";
+import { aPlayer, aTournament, fakeBackend, ME } from "./testing/fakeBackend";
+import { fakeWebSockets } from "./testing/fakeWebSocket";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -306,5 +308,66 @@ describe("tournament registrations", () => {
     expect(within(list).getByRole("listitem", { name: "Мария Иванова" })).toHaveTextContent("Игра окончена");
     expect(within(list).queryByRole("button", { name: "Снять с регистрации" })).not.toBeInTheDocument();
     expect(screen.getByRole("searchbox", { name: "Найти игрока клуба" })).toBeInTheDocument();
+  });
+});
+
+describe("registrations made elsewhere", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /** A player signs up in the Telegram bot: the backend has them registered at once. */
+  async function signUpInTheBot(player: Player) {
+    await fetch(`/api/clubs/${ME.club.id}/tournaments/${FRIDAY.id}/registrations`, {
+      method: "POST",
+      body: JSON.stringify({ player_id: player.id }),
+    });
+  }
+
+  it("shows a player who signed up in the Telegram bot without reloading the page", async () => {
+    fakeBackend({ loggedIn: true, tournaments: { upcoming: [FRIDAY], past: [] }, players: [MARIA] });
+    const sockets = fakeWebSockets();
+    await openRegistrations();
+    expect(await screen.findByText("Пока никто не зарегистрирован")).toBeInTheDocument();
+    expect(sockets.map((socket) => socket.url)).toEqual([
+      `ws://localhost:3000/api/clubs/${ME.club.id}/tournaments/${FRIDAY.id}/ws`,
+    ]);
+    act(() => sockets[0].open());
+
+    await signUpInTheBot(MARIA);
+    act(() => sockets[0].signalChange());
+
+    // The list replaces "nobody registered yet" once the page has read it afresh.
+    const list = await screen.findByRole("list", { name: "Зарегистрированные игроки" });
+    expect(within(list).getByRole("listitem", { name: "Мария Иванова" })).toHaveTextContent(
+      "Зарегистрирован",
+    );
+  });
+
+  it("reads the list afresh once a lost connection is back, so nothing missed meanwhile is lost", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    fakeBackend({ loggedIn: true, tournaments: { upcoming: [FRIDAY], past: [] }, players: [MARIA] });
+    const sockets = fakeWebSockets();
+    await openRegistrations();
+    act(() => sockets[0].open());
+
+    act(() => sockets[0].drop());
+    await signUpInTheBot(MARIA);
+    await act(() => vi.advanceTimersByTimeAsync(1000));
+    expect(sockets).toHaveLength(2);
+    act(() => sockets[1].open());
+
+    const list = await screen.findByRole("list", { name: "Зарегистрированные игроки" });
+    expect(within(list).getByRole("listitem", { name: "Мария Иванова" })).toBeInTheDocument();
+  });
+
+  it("stops listening once the admin leaves the tournament", async () => {
+    fakeBackend({ loggedIn: true, tournaments: { upcoming: [FRIDAY], past: [] } });
+    const sockets = fakeWebSockets();
+    const user = await openRegistrations();
+
+    await user.click(screen.getByRole("button", { name: "Назад к списку" }));
+
+    expect(sockets[0].closedByPage).toBe(true);
   });
 });
