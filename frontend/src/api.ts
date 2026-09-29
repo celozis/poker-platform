@@ -9,7 +9,10 @@ export type Club = {
   accent_color: string;
 };
 
-export type Admin = { id: number; name: string; phone: string };
+/** An owner can do all an admin can and also sees the club's reports. */
+export type AdminRole = "admin" | "owner";
+
+export type Admin = { id: number; name: string; phone: string; role: AdminRole };
 
 export type Me = { admin: Admin; club: Club };
 
@@ -531,6 +534,56 @@ export async function changePaymentMethod(
 ): Promise<Cashier> {
   const url = `${cashierUrl(clubId, tournamentId)}/transactions/${transactionId}/payment-method`;
   return accepted(await postJson(url, { payment_method: method }));
+}
+
+/** The days of an owner's report, both included, as "2026-09-01". */
+export type ReportPeriod = { from: string; to: string };
+
+/** What came in over a period. `tournaments`: those held, started whether finished or not. */
+export type Finances = {
+  tournaments: number;
+  by_kind: KindTotal[];
+  by_method: MethodTotal[];
+  total: number;
+};
+
+/** A week of the period, Monday to Sunday but no further than the period; `participants`: the
+ * players who came to each tournament, added up. */
+export type WeekAttendance = {
+  first_day: string;
+  last_day: string;
+  tournaments: number;
+  participants: number;
+};
+
+/** Every week of the period; `average_players` is null when no tournament was held. */
+export type Attendance = {
+  weeks: WeekAttendance[];
+  participants: number;
+  average_players: number | null;
+};
+
+/** The club owner's report of the tournaments that start in a period; the best ten players by
+ * the period's points and by the tournaments they played. */
+export type ClubReport = {
+  finances: Finances;
+  attendance: Attendance;
+  top_by_points: RatingRow[];
+  top_by_tournaments: RatingRow[];
+};
+
+function reportQuery(period: ReportPeriod): string {
+  return new URLSearchParams({ from: period.from, to: period.to }).toString();
+}
+
+/** The report of a period; a period that will not do is rejected with the reason. */
+export async function fetchReport(clubId: number, period: ReportPeriod): Promise<ClubReport> {
+  return accepted(await fetch(`/api/clubs/${clubId}/reports?${reportQuery(period)}`));
+}
+
+/** Where the browser downloads the report as a CSV file for Excel. */
+export function reportCsvUrl(clubId: number, period: ReportPeriod): string {
+  return `/api/clubs/${clubId}/reports.csv?${reportQuery(period)}`;
 }
 
 /** The player's profile. `telegram_linked`: a Telegram account is linked to them in the bot. */

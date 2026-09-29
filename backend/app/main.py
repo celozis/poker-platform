@@ -22,6 +22,7 @@ from app import (
     rating,
     realtime,
     registrations,
+    reports,
     results,
     tournament_changes,
     tournaments,
@@ -59,6 +60,7 @@ app.include_router(board.router)
 app.include_router(results.router)
 app.include_router(rating.router)
 app.include_router(cashier.router)
+app.include_router(reports.router)
 app.include_router(tournament_changes.router)
 app.include_router(cabinet.router)
 

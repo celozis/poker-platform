@@ -14,12 +14,17 @@ class ClubOut(BaseModel):
     accent_color: str
 
 
+# An owner can do all an admin can and also sees the club's reports.
+AdminRole = Literal["admin", "owner"]
+
+
 class AdminOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
     name: str
     phone: str
+    role: AdminRole
 
 
 class Me(BaseModel):
@@ -278,7 +283,8 @@ class RatingRow(BaseModel):
     position: int
     player: PlayerOut
     points: int
-    # Finished tournaments of the club the player has played this season.
+    # Finished tournaments of the club the player has played in the season, or in the period of
+    # an owner's report.
     tournaments: int
 
 
@@ -306,7 +312,8 @@ class CabinetRating(BaseModel):
     # Equal points share a position.
     position: int
     points: int
-    # Finished tournaments of the club the player has played this season.
+    # Finished tournaments of the club the player has played in the season, or in the period of
+    # an owner's report.
     tournaments: int
 
 
@@ -415,3 +422,46 @@ class Cashier(BaseModel):
     total: int
     # In the order they were made, storno included.
     transactions: list[TransactionOut]
+
+
+class Finances(BaseModel):
+    """What came in over a period, as the tournaments' cashiers add it up."""
+
+    # Tournaments held: started, whether finished yet or not; a cancelled one was not held.
+    tournaments: int
+    # Buy-in, re-entry and add-on, always all three.
+    by_kind: list[KindTotal]
+    # Cash and card, always both.
+    by_method: list[MethodTotal]
+    total: int
+
+
+class WeekAttendance(BaseModel):
+    # Monday to Sunday, but no further than the period either side.
+    first_day: date
+    last_day: date
+    # Tournaments held.
+    tournaments: int
+    # The players who came to each of them, added up: a player who came to two counts twice,
+    # one who re-entered once.
+    participants: int
+
+
+class Attendance(BaseModel):
+    # Every week of the period, those with no tournaments too.
+    weeks: list[WeekAttendance]
+    participants: int
+    # Players per tournament held, to one decimal; None when none was held.
+    average_players: float | None
+
+
+class ClubReport(BaseModel):
+    """The club owner's report of a period: its tournaments, those that start in it."""
+
+    finances: Finances
+    attendance: Attendance
+    # The club rating of the period (its finished tournaments), the first ten players; and the
+    # same players by the tournaments they played, the most first, equal numbers sharing
+    # a position, again the first ten.
+    top_by_points: list[RatingRow]
+    top_by_tournaments: list[RatingRow]

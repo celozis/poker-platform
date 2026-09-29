@@ -1,8 +1,10 @@
 import { vi } from "vitest";
 import type {
+  AdminRole,
   BlindTemplate,
   BoardState,
   ClubRating,
+  ClubReport,
   GameState,
   PaymentMethod,
   Player,
@@ -17,7 +19,7 @@ import type {
 import { FakeWebSocket } from "./fakeWebSocket";
 
 export const ME = {
-  admin: { id: 1, name: "Анна Соколова", phone: "+79990000001" },
+  admin: { id: 1, name: "Анна Соколова", phone: "+79990000001", role: "admin" as AdminRole },
   club: {
     id: 7,
     name: "Покер-клуб «Обь»",
@@ -115,6 +117,8 @@ export function aCabinet(overrides: Partial<PlayerCabinet> = {}): PlayerCabinet 
 type FakeBackendOptions = {
   /** An admin is logged in to the admin panel. */
   loggedIn?: boolean;
+  /** Who is logged in to the admin panel: an admin, or the club's owner. */
+  role?: AdminRole;
   /** A player is logged in to their web cabinet, which is `cabinet`. */
   playerLoggedIn?: boolean;
   cabinet?: PlayerCabinet;
@@ -147,6 +151,8 @@ type FakeBackendOptions = {
   refunds?: Record<number, number>;
   /** Cashier operations by tournament id, in the order they were made. */
   cashiers?: Record<number, Transaction[]>;
+  /** The owner's report, whatever the period, unless it starts after it ends. */
+  report?: ClubReport;
 };
 
 const CONSENT_MISSING = "Без согласия на обработку персональных данных игрока завести нельзя";
@@ -169,6 +175,7 @@ const byName = (a: { name: string }, b: { name: string }) => a.name.localeCompar
 // A stand-in for the backend API: remembers whether the browser is logged in and the club's tournaments.
 export function fakeBackend({
   loggedIn = false,
+  role = "admin",
   playerLoggedIn = false,
   cabinet = aCabinet(),
   down = [],
@@ -186,6 +193,7 @@ export function fakeBackend({
   ratings = [],
   refunds = {},
   cashiers = {},
+  report,
 }: FakeBackendOptions = {}) {
   let session = loggedIn;
   let playerSession = playerLoggedIn;
@@ -414,7 +422,7 @@ export function fakeBackend({
       case "GET /api/health":
         return json({ api: "ok", database: "ok" });
       case "GET /api/auth/me":
-        return session ? json(ME) : json({ detail: "Требуется вход" }, 401);
+        return session ? json({ ...ME, admin: { ...ME.admin, role } }) : json({ detail: "Требуется вход" }, 401);
       case "POST /api/auth/request-code":
         return new Response(null, { status: 204 });
       case "POST /api/auth/verify-code": {
@@ -467,6 +475,12 @@ export function fakeBackend({
       const season = searchParams.get("season");
       const rating = season ? ratings.find((r) => r.season.id === season) : ratings[0];
       return rating ? json(rating) : json({ detail: "Такого сезона нет" }, 404);
+    }
+    if (method === "GET" && pathname === `/api/clubs/${ME.club.id}/reports`) {
+      if (role !== "owner") return json({ detail: "Отчёты клуба видит только владелец" }, 403);
+      const [from, to] = [searchParams.get("from") ?? "", searchParams.get("to") ?? ""];
+      if (from > to) return json({ detail: ["Период: начало позже конца"] }, 422);
+      return report ? json(report) : json({ detail: "Нет отчёта" }, 500);
     }
     const cashierMatch = url.match(
       /^\/api\/clubs\/\d+\/tournaments\/(\d+)\/cashier(?:\/transactions\/(\d+)\/(reverse|payment-method))?$/,

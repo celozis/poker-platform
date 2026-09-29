@@ -19,9 +19,12 @@ def create_club(
         return club
 
 
-def create_admin(club: Club, phone: str, name: str = "Администратор") -> Admin:
+def create_admin(
+    club: Club, phone: str, name: str = "Администратор", role: str = "admin"
+) -> Admin:
+    """An admin of the club, or with role="owner" the club's owner."""
     with SessionLocal(expire_on_commit=False) as session:
-        admin = Admin(club_id=club.id, phone=phone, name=name)
+        admin = Admin(club_id=club.id, phone=phone, name=name, role=role)
         session.add(admin)
         session.commit()
         return admin

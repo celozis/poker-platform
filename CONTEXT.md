@@ -150,7 +150,9 @@ _Avoid_: Payment record, entry (for the money)
 
 **Bar Staff (Бар)**: Handles food/drink orders from the table.
 
-**Owner (Владелец клуба)**: Views financials, stats, and player data. Configures club branding.
+**Owner (Владелец клуба)**: Logs in to the Admin Panel as an admin does and can do all an admin can; alone sees the club's Reports. Belongs to exactly one club, like an admin (an admin with the role `owner`, ADR-0013). Configuring club branding is not there yet.
+
+**Club Report (Отчёт клуба)**: What the Owner sees of the club's tournaments that start in a period they pick (days from and to, league time, up to a year): the money (the Cashier's totals added up: by kind of operation and by payment method, and the tournaments held, those started), the attendance (the players who came to each tournament held, added up week by week, Monday to Sunday, and the players per tournament on average), and the best ten players by points and by tournaments played (the Club Rating of the period). Exported to CSV for Excel. Worked out on every request.
 
 **Network Owner**: Views consolidated stats across all clubs in the network.
 
@@ -164,7 +166,7 @@ _Avoid_: Payment record, entry (for the money)
 
 **Web Cabinet (ЛК)**: The player's own page on the site's root address, laid out for a phone first. The player logs in by phone and Login Code (any player the league knows) and sees their profile (name, phone, their clubs, whether Telegram is linked), their position and points in the rating of each of their clubs this season, the Schedule of each of their clubs (marked where they are signed up), and the finished tournaments they played in any club, the latest first: date, tournament, club, place of how many, points, re-entries and add-ons. Which player is shown comes from the Player Session alone: no address takes a player's id (ADR-0012). VK/Telegram login is not there yet.
 
-**Admin Panel**: Web dashboard for admins to run tournaments, manage players, track cash.
+**Admin Panel**: Web dashboard for admins to run tournaments, manage players, track cash. The club's Owner logs in to it too and has one more section, the Club Report (`Отчёты`).
 
 **Dealer Cabinet**: Minimal screen for dealers showing their table, seating, rotation alerts, dispute-raise button.
 
@@ -189,6 +191,7 @@ _Avoid_: Tabletop
 - **Running a tournament**: the game lives in the tournament row (status, blind clock) and in its registrations (seat, finish order, re-entries, add-ons); the blind clock is worked out from the time, with no background job (ADR-0006).
 - **Cashier**: every paid action writes a row to `transactions` (`app/transactions.py`); a storno is another row pointing at the one it reverses. The cashier's summary and the CSV are worked out from the rows on every request (`app/cashier.py`, ADR-0009).
 - **Web Cabinet**: `/api/cabinet` (`app/cabinet.py`): login, logout and the whole cabinet in one `GET`, for the player of the Player Session. Sending and checking login codes and making session tokens are shared with the admin login (`app/auth.py`); the club schedule with the bot (`app/schedule.py`); the club rating's `club_standings` with the admin panel and the bot (ADR-0012).
+- **Owner's reports**: `/api/clubs/{club_id}/reports` and `.csv` (`app/reports.py`), behind `OwnerClub`, which lets through only the club's own owner (ADR-0013). The money comes from `transactions` with the cashier's `kind_totals` and `method_totals`, the best players from the rating's `club_standings`.
 - **Results and rating**: the last knock-out fixes every player's place and points in their registration; a place correction rewrites them. The club rating adds the points up per season on every request, with no table of its own (ADR-0008).
 - **Realtime**: a change of a tournament, in the backend or the bot, sends PostgreSQL `NOTIFY tournament_changed` in its own transaction, delivered once it commits; every backend process `LISTEN`s and wakes its watchers (`app/realtime.py`). Each connected hall board then reads the board afresh and gets it over its WebSocket (ADR-0007); an admin panel page gets `changed` over `/api/clubs/{club_id}/tournaments/{id}/ws` and reads afresh (ADR-0011).
 - **Bot notifications**: the bot process looks every 30 seconds for reminders and results due and sends them; each registration keeps when they were sent (`app/bot/notifications.py`, ADR-0011).
@@ -236,7 +239,7 @@ docker compose up --build
 ```
 
 - Player's web cabinet: http://localhost:5173 (login by a player's phone)
-- Admin panel: http://localhost:5173/admin (admin login; API and database status in the footer)
+- Admin panel: http://localhost:5173/admin (admin or owner login; API and database status in the footer)
 - Hall board: http://localhost:5173/board/<board token>, no login; the admin panel shows the link on a tournament's running page ("Проведение")
 - Backend API: http://localhost:8000 (health check: `/api/health`, docs: `/docs`)
 - PostgreSQL: `localhost:5433`, user/password `poker`/`poker`, databases `poker` (dev) and `poker_test` (tests). Host port 5433 avoids clashing with a locally installed PostgreSQL.
@@ -245,16 +248,18 @@ docker compose up --build
 
 ```bash
 # With the stack running (`docker compose up`, which applies migrations first),
-# create (or refresh) the two test clubs and their admins; safe to run again
+# create (or refresh) the two test clubs with an admin and an owner each; safe to run again
 docker compose exec backend python -m app.seed
 ```
 
-| Club | Admin | Phone |
-|---|---|---|
-| Покер-клуб «Обь» | Анна Соколова | +7 999 000-00-01 |
-| Покер-клуб «Енисей» | Дмитрий Орлов | +7 999 000-00-02 |
+| Club | Role | Name | Phone |
+|---|---|---|---|
+| Покер-клуб «Обь» | Admin | Анна Соколова | +7 999 000-00-01 |
+| Покер-клуб «Обь» | Owner | Олег Владимиров | +7 999 000-00-11 |
+| Покер-клуб «Енисей» | Admin | Дмитрий Орлов | +7 999 000-00-02 |
+| Покер-клуб «Енисей» | Owner | Ирина Белова | +7 999 000-00-12 |
 
-To log in, enter the phone on http://localhost:5173/admin and read the code from the backend log (no SMS is sent in the prototype). A player logs in to their cabinet on http://localhost:5173 the same way, with the phone the club or the bot has for them:
+To log in, enter the phone on http://localhost:5173/admin (an owner the same way; the owner has the "Отчёты" section) and read the code from the backend log (no SMS is sent in the prototype). A player logs in to their cabinet on http://localhost:5173 the same way, with the phone the club or the bot has for them:
 
 ```bash
 docker compose logs backend | grep "Код входа"

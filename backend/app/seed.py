@@ -1,4 +1,5 @@
-"""Creates the two test clubs with one admin each. Safe to run again: it updates in place.
+"""Creates the two test clubs with one admin and one owner each. Safe to run again: it updates
+in place.
 
     python -m app.seed
 """
@@ -19,6 +20,8 @@ class SeedClub:
     accent_color: str
     admin_name: str
     admin_phone: str
+    owner_name: str
+    owner_phone: str
 
 
 SEED_CLUBS = [
@@ -29,6 +32,8 @@ SEED_CLUBS = [
         accent_color="#F2A900",
         admin_name="Анна Соколова",
         admin_phone="+79990000001",
+        owner_name="Олег Владимиров",
+        owner_phone="+79990000011",
     ),
     SeedClub(
         name="Покер-клуб «Енисей»",
@@ -37,6 +42,8 @@ SEED_CLUBS = [
         accent_color="#E8C07D",
         admin_name="Дмитрий Орлов",
         admin_phone="+79990000002",
+        owner_name="Ирина Белова",
+        owner_phone="+79990000012",
     ),
 ]
 
@@ -51,11 +58,16 @@ def seed() -> None:
             session.add(club)
             session.flush()
 
-            admin = session.scalar(select(Admin).where(Admin.phone == data.admin_phone))
-            admin = admin or Admin(phone=data.admin_phone)
-            admin.name = data.admin_name
-            admin.club_id = club.id
-            session.add(admin)
+            for phone, name, role in (
+                (data.admin_phone, data.admin_name, "admin"),
+                (data.owner_phone, data.owner_name, "owner"),
+            ):
+                admin = session.scalar(select(Admin).where(Admin.phone == phone))
+                admin = admin or Admin(phone=phone)
+                admin.name = name
+                admin.role = role
+                admin.club_id = club.id
+                session.add(admin)
         session.commit()
 
 
@@ -63,3 +75,4 @@ if __name__ == "__main__":
     seed()
     for data in SEED_CLUBS:
         print(f"{data.name}: администратор {data.admin_name}, телефон {data.admin_phone}")
+        print(f"{data.name}: владелец {data.owner_name}, телефон {data.owner_phone}")

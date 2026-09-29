@@ -29,6 +29,9 @@ _FIELDS = {
     "player_id": "Номер игрока",
     "table": "Стол",
     "seat": "Место",
+    # The period of an owner's report (app/reports.py).
+    "from": "Период, с",
+    "to": "Период, по",
 }
 
 _PROBLEMS = {
@@ -39,6 +42,10 @@ _PROBLEMS = {
     "string_type": "нужен текст",
     "bool_type": "нужно да или нет",
     "bool_parsing": "нужно да или нет",
+    "date_type": "нужна дата",
+    "date_parsing": "нужна дата",
+    "date_from_datetime_parsing": "нужна дата",
+    "date_from_datetime_inexact": "нужна дата",
     "datetime_type": "нужны дата и время",
     "datetime_parsing": "нужны дата и время",
     "datetime_from_date_parsing": "нужны дата и время",

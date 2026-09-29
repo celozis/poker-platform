@@ -25,7 +25,7 @@ def test_admin_logs_in_with_the_code_from_the_log(
     me = client.get("/api/auth/me")
     assert me.status_code == 200
     assert me.json() == {
-        "admin": {"id": admin.id, "name": "Анна", "phone": "+79130000001"},
+        "admin": {"id": admin.id, "name": "Анна", "phone": "+79130000001", "role": "admin"},
         "club": {
             "id": club.id,
             "name": "Покер-клуб «Обь»",
@@ -34,6 +34,23 @@ def test_admin_logs_in_with_the_code_from_the_log(
             "accent_color": "#F2A900",
         },
     }
+
+
+def test_club_owner_logs_in_to_the_admin_panel_as_the_owner(
+    client: TestClient, caplog: pytest.LogCaptureFixture
+) -> None:
+    club = create_club(name="Покер-клуб «Обь»")
+    create_admin(club, phone="+79130000001", name="Анна")
+    create_admin(club, phone="+79130000009", name="Олег Владимиров", role="owner")
+
+    log_in(client, caplog, "+79130000009")
+
+    me = client.get("/api/auth/me").json()
+    assert (me["admin"]["name"], me["admin"]["role"], me["club"]["id"]) == (
+        "Олег Владимиров",
+        "owner",
+        club.id,
+    )
 
 
 def test_wrong_code_does_not_log_in(client: TestClient, caplog: pytest.LogCaptureFixture) -> None:

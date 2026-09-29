@@ -27,3 +27,13 @@ AdminClub = Annotated[Club, Depends(admin_club)]
 @router.get("")
 def get_club(club: AdminClub) -> ClubOut:
     return ClubOut.model_validate(club)
+
+
+def owner_club(club: AdminClub, admin: CurrentAdmin) -> Club:
+    """The admin's own club, but only for its owner: the club's reports are the owner's alone."""
+    if admin.role != "owner":
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Отчёты клуба видит только владелец")
+    return club
+
+
+OwnerClub = Annotated[Club, Depends(owner_club)]

@@ -3,15 +3,18 @@ import type { Me } from "./api";
 import LeagueBrand from "./LeagueBrand";
 import PlayersPage from "./PlayersPage";
 import RatingPage from "./RatingPage";
+import ReportsPage from "./ReportsPage";
 import TournamentsPage from "./TournamentsPage";
 
-const SECTIONS = ["Турниры", "Игроки", "Рейтинг"] as const;
+const SECTIONS = ["Турниры", "Игроки", "Рейтинг", "Отчёты"] as const;
 type Section = (typeof SECTIONS)[number];
 
-/** The club admin's workspace, dressed in the club's own logo and colours. */
+/** The club admin's workspace, dressed in the club's own logo and colours. The club's owner
+ * works in it too, and alone sees the club's reports. */
 export default function AdminPanel({ me, onLogout }: { me: Me; onLogout: () => void }) {
   const { admin, club } = me;
   const [section, setSection] = useState<Section>("Турниры");
+  const sections = SECTIONS.filter((name) => name !== "Отчёты" || admin.role === "owner");
 
   return (
     <>
@@ -42,7 +45,7 @@ export default function AdminPanel({ me, onLogout }: { me: Me; onLogout: () => v
       </header>
       <main className="mx-auto w-full max-w-5xl flex-1 px-4 py-8">
         <nav aria-label="Разделы" className="mb-6 flex flex-wrap gap-2">
-          {SECTIONS.map((name) => (
+          {sections.map((name) => (
             <button
               key={name}
               type="button"
@@ -60,6 +63,7 @@ export default function AdminPanel({ me, onLogout }: { me: Me; onLogout: () => v
         {section === "Турниры" && <TournamentsPage club={club} />}
         {section === "Игроки" && <PlayersPage club={club} />}
         {section === "Рейтинг" && <RatingPage club={club} />}
+        {section === "Отчёты" && <ReportsPage club={club} />}
         <LeagueBrand className="mt-8 justify-center text-slate-500" />
       </main>
     </>

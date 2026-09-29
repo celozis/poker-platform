@@ -27,6 +27,9 @@ class Admin(Base):
     club_id: Mapped[int] = mapped_column(ForeignKey("clubs.id"), index=True)
     phone: Mapped[str] = mapped_column(String(16), unique=True)
     name: Mapped[str] = mapped_column(String(200))
+    # admin, or owner: the club's owner, who can do all an admin can and also sees the club's
+    # reports (app/reports.py).
+    role: Mapped[str] = mapped_column(String(10), default="admin")
 
     club: Mapped[Club] = relationship()
 

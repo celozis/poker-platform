@@ -72,26 +72,36 @@ def _transaction_out(transaction: Transaction, reversed_by: dict[int, int]) -> T
     )
 
 
+def kind_totals(transactions: Sequence[Transaction]) -> list[KindTotal]:
+    """What came in for each kind of operation, and how many operations stand: neither a storno
+    nor reversed by one. The owner's reports (app/reports.py) add up a period's the same way."""
+    reversed_by = _reversed_by(transactions)
+    standing = [t for t in transactions if t.reverses_id is None and t.id not in reversed_by]
+    return [
+        KindTotal(
+            kind=kind,
+            count=sum(t.kind == kind for t in standing),
+            amount=sum(t.amount for t in transactions if t.kind == kind),
+        )
+        for kind in get_args(TransactionKind)
+    ]
+
+
+def method_totals(transactions: Sequence[Transaction]) -> list[MethodTotal]:
+    return [
+        MethodTotal(
+            payment_method=method,
+            amount=sum(t.amount for t in transactions if t.payment_method == method),
+        )
+        for method in get_args(PaymentMethod)
+    ]
+
+
 def _cashier(transactions: Sequence[Transaction]) -> Cashier:
     reversed_by = _reversed_by(transactions)
-    # Operations that stand: neither a storno nor reversed by one.
-    standing = [t for t in transactions if t.reverses_id is None and t.id not in reversed_by]
     return Cashier(
-        by_kind=[
-            KindTotal(
-                kind=kind,
-                count=sum(t.kind == kind for t in standing),
-                amount=sum(t.amount for t in transactions if t.kind == kind),
-            )
-            for kind in get_args(TransactionKind)
-        ],
-        by_method=[
-            MethodTotal(
-                payment_method=method,
-                amount=sum(t.amount for t in transactions if t.payment_method == method),
-            )
-            for method in get_args(PaymentMethod)
-        ],
+        by_kind=kind_totals(transactions),
+        by_method=method_totals(transactions),
         total=sum(t.amount for t in transactions),
         transactions=[_transaction_out(t, reversed_by) for t in transactions],
     )
@@ -128,7 +138,7 @@ def _note(transaction: TransactionOut) -> str:
     return "; ".join(notes)
 
 
-def _text(value: str) -> str:
+def excel_text(value: str) -> str:
     """Text as Excel shows it, never as a formula: a name such as "=HYPERLINK(...)", which
     a player could give, would otherwise be run when the file is opened."""
     return f"'{value}" if value[:1] in ("=", "+", "-", "@") else value
@@ -149,10 +159,10 @@ def _csv(tournament: Tournament, cashier: Cashier) -> str:
             t.id,
             _local(t.created_at),
             KIND_NAMES[t.kind],
-            _text(t.player.name),
+            excel_text(t.player.name),
             METHOD_NAMES[t.payment_method],
             t.amount,
-            _text(t.admin.name),
+            excel_text(t.admin.name),
             _note(t),
         ])
     writer.writerow([])
