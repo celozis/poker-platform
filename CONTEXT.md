@@ -265,6 +265,18 @@ To log in, enter the phone on http://localhost:5173/admin (an owner the same way
 docker compose logs backend | grep "Код входа"
 ```
 
+### Demo data
+
+```bash
+# Deletes every tournament and every player not linked to Telegram, then fills the dev database
+# with a third club («Томь»), more staff, 60 players and 25 tournaments of every kind: finished
+# (this season and the one before), going on now in every club (two at once in «Обь»), waiting
+# for the start, coming, cancelled. Run again for a fresh set around the current time.
+docker compose exec backend python -m app.demo
+```
+
+It plays everything through the API with the clock set back (`app/demo.py`), so places, points, cashiers and blind clocks are the system's own. Demo players' phones are +7 913 500-00-01 … -60. More staff: Сергей Лебедев +7 999 000-00-21 (admin, «Обь»), Ольга Кравец +7 999 000-00-22 (admin, «Енисей»), Павел Громов +7 999 000-00-03 (admin, «Томь»), Наталья Широкова +7 999 000-00-13 (owner, «Томь»). A Telegram-linked player plays in the tournaments of «Енисей», so the bot sends them a result and a reminder.
+
 ### Running tests
 
 Backend tests hit a real PostgreSQL (`poker_test`), so the `db` service must be running. `poker_test` is created only when the `pgdata` volume is first initialised; if your volume predates it, run `docker compose exec db createdb -U poker poker_test` once (or recreate the volume with `docker compose down -v`, which deletes dev data). The test fixture resets the schema and refuses to run against a database whose name doesn't end in `_test`.
