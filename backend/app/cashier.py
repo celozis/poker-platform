@@ -15,6 +15,7 @@ from fastapi import APIRouter, HTTPException, Response, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app import action_log
 from app.auth import CurrentAdmin, DbSession, Now
 from app.clubs import AdminClub
 from app.models import Tournament, Transaction
@@ -29,13 +30,12 @@ from app.schemas import (
     TransactionKind,
     TransactionOut,
 )
-from app.seasons import LEAGUE_TIME
+from app.seasons import league_time_text
 from app.tournaments import club_tournament
-from app.transactions import pay_again, reverse
+from app.transactions import PAID_BY, pay_again, reverse, roubles
 
 router = APIRouter(prefix="/api/clubs/{club_id}/tournaments/{tournament_id}")
 
-PAID_BY = {"cash": "наличными", "card": "картой"}
 KIND_NAMES = {"buy_in": "Бай-ин", "reentry": "Re-entry", "addon": "Add-on"}
 METHOD_NAMES = {"cash": "Наличные", "card": "Карта"}
 # The byte order mark tells Excel the file is in UTF-8.
@@ -122,11 +122,6 @@ def export_cashier(tournament_id: int, club: AdminClub, session: DbSession) -> R
     )
 
 
-def _local(moment: datetime) -> str:
-    """In the league's time, as the clubs' clocks show it (app/seasons.py)."""
-    return moment.astimezone(LEAGUE_TIME).strftime("%d.%m.%Y %H:%M")
-
-
 def _note(transaction: TransactionOut) -> str:
     notes = []
     if transaction.reverses_id is not None:
@@ -149,7 +144,7 @@ def _csv(tournament: Tournament, cashier: Cashier) -> str:
     expects, and no phone numbers, which the accounts do not need."""
     out = StringIO()
     writer = csv.writer(out, delimiter=";")
-    writer.writerow([f"Касса турнира «{tournament.name}», начало {_local(tournament.starts_at)}"])
+    writer.writerow([f"Касса турнира «{tournament.name}», начало {league_time_text(tournament.starts_at)}"])
     writer.writerow([])
     writer.writerow(
         ["№", "Время", "Операция", "Игрок", "Способ оплаты", "Сумма", "Администратор", "Примечание"]
@@ -157,7 +152,7 @@ def _csv(tournament: Tournament, cashier: Cashier) -> str:
     for t in cashier.transactions:
         writer.writerow([
             t.id,
-            _local(t.created_at),
+            league_time_text(t.created_at),
             KIND_NAMES[t.kind],
             excel_text(t.player.name),
             METHOD_NAMES[t.payment_method],
@@ -173,6 +168,12 @@ def _csv(tournament: Tournament, cashier: Cashier) -> str:
         writer.writerow([METHOD_NAMES[method.payment_method], "", method.amount])
     writer.writerow(["Всего", "", cashier.total])
     return out.getvalue()
+
+
+def _operation(transaction: Transaction) -> str:
+    """"Операция № 7, бай-ин 2 000 ₽", as the action log names it."""
+    kind = KIND_NAMES[transaction.kind].lower()
+    return f"Операция № {transaction.id}, {kind} {roubles(transaction.amount)}"
 
 
 def _reversible(transactions: Sequence[Transaction], transaction_id: int) -> Transaction:
@@ -201,6 +202,15 @@ def reverse_transaction(
     tournament = club_tournament(session, club, tournament_id, for_update=True)
     transaction = _reversible(_transactions(session, tournament), transaction_id)
     reverse(session, tournament, transaction, admin, now)
+    action_log.record(
+        session,
+        tournament,
+        admin,
+        "storno",
+        now,
+        player_id=transaction.player_id,
+        details=f"{_operation(transaction)} {PAID_BY[transaction.payment_method]}",
+    )
     session.commit()
     return _cashier(_transactions(session, tournament))
 
@@ -224,5 +234,15 @@ def change_payment_method(
             status.HTTP_409_CONFLICT, f"Операция и так оплачена {PAID_BY[body.payment_method]}"
         )
     pay_again(session, tournament, transaction, body.payment_method, admin, now)
+    was, paid_now = PAID_BY[transaction.payment_method], PAID_BY[body.payment_method]
+    action_log.record(
+        session,
+        tournament,
+        admin,
+        "payment_method_changed",
+        now,
+        player_id=transaction.player_id,
+        details=f"{_operation(transaction)}: {was} → {paid_now}",
+    )
     session.commit()
     return _cashier(_transactions(session, tournament))

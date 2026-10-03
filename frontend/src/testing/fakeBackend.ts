@@ -6,6 +6,7 @@ import type {
   ClubRating,
   ClubReport,
   GameState,
+  ActionLogEntry,
   PaymentMethod,
   Player,
   PlayerCabinet,
@@ -153,6 +154,8 @@ type FakeBackendOptions = {
   cashiers?: Record<number, Transaction[]>;
   /** The owner's report, whatever the period, unless it starts after it ends. */
   report?: ClubReport;
+  /** Action logs by tournament id, the latest first. */
+  actionLogs?: Record<number, ActionLogEntry[]>;
 };
 
 const CONSENT_MISSING = "Без согласия на обработку персональных данных игрока завести нельзя";
@@ -194,6 +197,7 @@ export function fakeBackend({
   refunds = {},
   cashiers = {},
   report,
+  actionLogs = {},
 }: FakeBackendOptions = {}) {
   let session = loggedIn;
   let playerSession = playerLoggedIn;
@@ -481,6 +485,12 @@ export function fakeBackend({
       const [from, to] = [searchParams.get("from") ?? "", searchParams.get("to") ?? ""];
       if (from > to) return json({ detail: ["Период: начало позже конца"] }, 422);
       return report ? json(report) : json({ detail: "Нет отчёта" }, 500);
+    }
+    const [, logOf] = pathname.match(/^\/api\/clubs\/\d+\/tournaments\/(\d+)\/log$/) ?? [];
+    if (method === "GET" && logOf) {
+      const playerId = searchParams.get("player_id");
+      const log = actionLogs[Number(logOf)] ?? [];
+      return json(playerId ? log.filter((e) => e.player?.id === Number(playerId)) : log);
     }
     const cashierMatch = url.match(
       /^\/api\/clubs\/\d+\/tournaments\/(\d+)\/cashier(?:\/transactions\/(\d+)\/(reverse|payment-method))?$/,

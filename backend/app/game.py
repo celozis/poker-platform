@@ -18,12 +18,12 @@ from pydantic import TypeAdapter
 from sqlalchemy import select
 from sqlalchemy.orm import contains_eager
 
-from app import realtime
+from app import action_log, realtime
 from app.auth import CurrentAdmin, DbSession, Now
 from app.blind_clock import BlindClock
 from app.clubs import AdminClub
 from app.entry_windows import EntryWindows, entry_windows
-from app.models import Club, Player, Registration, Tournament
+from app.models import Admin, Club, Player, Registration, Tournament
 from app.results import rank
 from app.schemas import (
     ClockOut,
@@ -85,6 +85,20 @@ def _set_clock(tournament: Tournament, clock: BlindClock) -> None:
     tournament.clock_item = clock.item
     tournament.clock_ends_at = clock.ends_at
     tournament.clock_remaining = clock.remaining
+
+
+def _item_name(tournament: Tournament, item: int) -> str:
+    """"уровень 3" or "перерыв": levels are numbered without the breaks, as the admin sees them."""
+    structure = structure_of(tournament)
+    if structure[item].kind == "break":
+        return "перерыв"
+    return f"уровень {sum(i.kind == 'level' for i in structure[: item + 1])}"
+
+
+def _clock_details(tournament: Tournament, clock: BlindClock, now: datetime) -> str:
+    """What the clock shows the admin: "Уровень 1, осталось 15:00"."""
+    minutes, seconds = divmod(round(clock.time_left(now).total_seconds()), 60)
+    return f"{_item_name(tournament, clock.at(now).item).capitalize()}, осталось {minutes}:{seconds:02}"
 
 
 def _registrations(session: DbSession, tournament: Tournament) -> list[Registration]:
@@ -227,7 +241,7 @@ def get_game(tournament_id: int, club: AdminClub, session: DbSession, now: Now) 
 
 @router.post("/start")
 def start(
-    tournament_id: int, club: AdminClub, session: DbSession, now: Now, rng: Rng
+    tournament_id: int, club: AdminClub, admin: CurrentAdmin, session: DbSession, now: Now, rng: Rng
 ) -> GameState:
     """Seats everyone who has come and starts the blind clock on the first level."""
     tournament = club_tournament(session, club, tournament_id, for_update=True)
@@ -240,11 +254,16 @@ def start(
     arrived = {r.player_id: r for r in _registrations(session, tournament) if r.checked_in_at}
     if len(arrived) < 2:
         raise _refuse("Для старта нужны хотя бы два пришедших игрока")
-    for player_id, seat in initial_seating(list(arrived), tournament.seats_per_table, rng).items():
+    seating = initial_seating(list(arrived), tournament.seats_per_table, rng)
+    for player_id, seat in seating.items():
         arrived[player_id].table_number, arrived[player_id].seat_number = seat.table, seat.seat
     tournament.status = "running"
     tournament.started_at = now
     _set_clock(tournament, BlindClock.started(_durations(tournament), now))
+    tables = len({seat.table for seat in seating.values()})
+    action_log.record(
+        session, tournament, admin, "started", now, details=f"Игроков: {len(arrived)}, столов: {tables}"
+    )
     return _saved(session, tournament, now)
 
 
@@ -265,47 +284,66 @@ def _live_clock(tournament: Tournament) -> BlindClock:
 
 
 @router.post("/pause")
-def pause(tournament_id: int, club: AdminClub, session: DbSession, now: Now) -> GameState:
+def pause(
+    tournament_id: int, club: AdminClub, admin: CurrentAdmin, session: DbSession, now: Now
+) -> GameState:
     tournament = _live_tournament(session, club, tournament_id)
     if tournament.status == "paused":
         raise _refuse("Турнир уже на паузе")
-    _set_clock(tournament, _live_clock(tournament).paused(now))
+    clock = _live_clock(tournament).paused(now)
+    _set_clock(tournament, clock)
     tournament.status = "paused"
+    action_log.record(
+        session, tournament, admin, "paused", now, details=_clock_details(tournament, clock, now)
+    )
     return _saved(session, tournament, now)
 
 
 @router.post("/resume")
-def resume(tournament_id: int, club: AdminClub, session: DbSession, now: Now) -> GameState:
+def resume(
+    tournament_id: int, club: AdminClub, admin: CurrentAdmin, session: DbSession, now: Now
+) -> GameState:
     tournament = _live_tournament(session, club, tournament_id)
     if tournament.status != "paused":
         raise _refuse("Турнир не на паузе")
-    _set_clock(tournament, _live_clock(tournament).resumed(now))
+    clock = _live_clock(tournament).resumed(now)
+    _set_clock(tournament, clock)
     tournament.status = "running"
+    action_log.record(
+        session, tournament, admin, "resumed", now, details=_clock_details(tournament, clock, now)
+    )
     return _saved(session, tournament, now)
 
 
 def _switch_level(
-    tournament_id: int, club: Club, session: DbSession, now: datetime, step: int
+    tournament_id: int, club: Club, admin: Admin, session: DbSession, now: datetime, step: int
 ) -> GameState:
     tournament = _live_tournament(session, club, tournament_id)
     clock = _live_clock(tournament)
     if not clock.can_move(step, now):
         raise _refuse("Это последний уровень структуры" if step > 0 else "Это первый уровень структуры")
-    _set_clock(tournament, clock.moved(step, now))
+    moved = clock.moved(step, now)
+    _set_clock(tournament, moved)
+    was, became = _item_name(tournament, clock.at(now).item), _item_name(tournament, moved.item)
+    action_log.record(
+        session, tournament, admin, "level_changed", now, details=f"{was.capitalize()} → {became}"
+    )
     return _saved(session, tournament, now)
 
 
 @router.post("/next-level")
-def next_level(tournament_id: int, club: AdminClub, session: DbSession, now: Now) -> GameState:
+def next_level(
+    tournament_id: int, club: AdminClub, admin: CurrentAdmin, session: DbSession, now: Now
+) -> GameState:
     """Moves on to the next item of the structure, a level or a break, from its start."""
-    return _switch_level(tournament_id, club, session, now, step=1)
+    return _switch_level(tournament_id, club, admin, session, now, step=1)
 
 
 @router.post("/previous-level")
 def previous_level(
-    tournament_id: int, club: AdminClub, session: DbSession, now: Now
+    tournament_id: int, club: AdminClub, admin: CurrentAdmin, session: DbSession, now: Now
 ) -> GameState:
-    return _switch_level(tournament_id, club, session, now, step=-1)
+    return _switch_level(tournament_id, club, admin, session, now, step=-1)
 
 
 def _registered(registrations: list[Registration], player_id: int) -> Registration:
@@ -333,6 +371,17 @@ def _sit(registration: Registration, seat: Seat | None) -> None:
     registration.seat_number = None if seat is None else seat.seat
 
 
+def _seat_details(registration: Registration, *more: str) -> str:
+    """"Стол 2, место 3", and whatever else there is to say, such as the money paid."""
+    seat = f"Стол {registration.table_number}, место {registration.seat_number}"
+    return "; ".join(part for part in (seat, *more) if part)
+
+
+def _seat_change(was: str, registration: Registration) -> str:
+    """"Стол 2, место 3 → стол 1, место 5": from the seat `was` to where the player sits now."""
+    return f"{was} → {_seat_details(registration).lower()}"
+
+
 def _finish(registration: Registration, registrations: list[Registration]) -> None:
     """Takes the player out of the game as the next to finish."""
     registration.finish_order = 1 + max((r.finish_order or 0 for r in registrations), default=0)
@@ -341,7 +390,13 @@ def _finish(registration: Registration, registrations: list[Registration]) -> No
 
 @router.post("/players/{player_id}/knock-out")
 def knock_out(
-    tournament_id: int, player_id: int, club: AdminClub, session: DbSession, now: Now, rng: Rng
+    tournament_id: int,
+    player_id: int,
+    club: AdminClub,
+    admin: CurrentAdmin,
+    session: DbSession,
+    now: Now,
+    rng: Rng,
 ) -> GameState:
     """Knocks the player out. The last player standing wins and the tournament is finished, which
     fixes everyone's place and rating points; once the players left fit at one table, they are
@@ -351,6 +406,10 @@ def knock_out(
     registration = _registered(registrations, player_id)
     _require_in_game(registration)
     _finish(registration, registrations)
+    place = _places(registrations)[player_id]
+    action_log.record(
+        session, tournament, admin, "knocked_out", now, player_id=player_id, details=f"Место {place}"
+    )
     left = [r for r in registrations if r.status == "in_game"]
     if len(left) == 1:
         _finish(left[0], registrations)
@@ -365,13 +424,29 @@ def knock_out(
         final = final_table_seating(_seating(registrations), tournament.seats_per_table, rng)
         if final is not None:
             for r in left:
+                was = _seat_details(r)
                 _sit(r, final[r.player_id])
+                action_log.record(
+                    session,
+                    tournament,
+                    admin,
+                    "final_table",
+                    now,
+                    player_id=r.player_id,
+                    details=_seat_change(was, r),
+                )
     return _saved(session, tournament, now)
 
 
 @router.post("/players/{player_id}/undo-knock-out")
 def undo_knock_out(
-    tournament_id: int, player_id: int, club: AdminClub, session: DbSession, now: Now, rng: Rng
+    tournament_id: int,
+    player_id: int,
+    club: AdminClub,
+    admin: CurrentAdmin,
+    session: DbSession,
+    now: Now,
+    rng: Rng,
 ) -> GameState:
     """Takes back a knock-out marked by mistake: the player returns to the table with the fewest
     players, and it does not count as a re-entry. Only while the tournament is live; places in a
@@ -382,6 +457,15 @@ def undo_knock_out(
     _require_out(registration)
     registration.finish_order = None
     _sit(registration, seat_for_newcomer(_seating(registrations), tournament.seats_per_table, rng))
+    action_log.record(
+        session,
+        tournament,
+        admin,
+        "knock_out_undone",
+        now,
+        player_id=player_id,
+        details=_seat_details(registration),
+    )
     return _saved(session, tournament, now)
 
 
@@ -406,11 +490,20 @@ def reentry(
         raise _refuse("В этом турнире нет re-entry")
     if not current_windows(tournament, now).reentry:
         raise _refuse(f"Re-entry закрыт: он был до уровня {tournament.reentry_until_level}")
-    take_payment(session, tournament, player_id, "reentry", payment, admin, now)
+    paid = take_payment(session, tournament, player_id, "reentry", payment, admin, now)
     registration.finish_order = None
     registration.reentries += 1
     registration.addon_this_entry = False
     _sit(registration, seat_for_newcomer(_seating(registrations), tournament.seats_per_table, rng))
+    action_log.record(
+        session,
+        tournament,
+        admin,
+        "reentry",
+        now,
+        player_id=player_id,
+        details=_seat_details(registration, action_log.paid(paid)),
+    )
     return _saved(session, tournament, now)
 
 
@@ -435,9 +528,12 @@ def addon(
         raise _refuse(f"Add-on берут на уровне {tournament.addon_at_level} и в перерыве после него")
     if registration.addon_this_entry:
         raise _refuse(f"Игрок {registration.player.name} уже взял add-on")
-    take_payment(session, tournament, player_id, "addon", payment, admin, now)
+    paid = take_payment(session, tournament, player_id, "addon", payment, admin, now)
     registration.addons += 1
     registration.addon_this_entry = True
+    action_log.record(
+        session, tournament, admin, "addon", now, player_id=player_id, details=action_log.paid(paid)
+    )
     return _saved(session, tournament, now)
 
 
@@ -463,16 +559,32 @@ def seat_late_player(
     closed = late_registration_closed_because(tournament, now)
     if closed:
         raise _refuse(closed)
+    paid = None
     if registration.checked_in_at is None:
-        take_payment(session, tournament, player_id, "buy_in", payment, admin, now)
+        paid = take_payment(session, tournament, player_id, "buy_in", payment, admin, now)
         registration.checked_in_at = now
     _sit(registration, seat_for_newcomer(_seating(registrations), tournament.seats_per_table, rng))
+    action_log.record(
+        session,
+        tournament,
+        admin,
+        "seated_late",
+        now,
+        player_id=player_id,
+        details=_seat_details(registration, action_log.paid(paid)),
+    )
     return _saved(session, tournament, now)
 
 
 @router.post("/players/{player_id}/move")
 def move_player(
-    tournament_id: int, player_id: int, body: MoveIn, club: AdminClub, session: DbSession, now: Now
+    tournament_id: int,
+    player_id: int,
+    body: MoveIn,
+    club: AdminClub,
+    admin: CurrentAdmin,
+    session: DbSession,
+    now: Now,
 ) -> GameState:
     """Moves a player to a free seat: the suggested move, or any other the floor decides on."""
     tournament = _live_tournament(session, club, tournament_id)
@@ -493,5 +605,21 @@ def move_player(
     target = Seat(body.table, body.seat)
     if target in seating.values():
         raise _refuse(f"Стол {target.table}, место {target.seat} занято")
+    suggested = suggested_move(seating, tournament.seats_per_table)
+    how = (
+        "по подсказке"
+        if suggested is not None and (suggested.player_id, suggested.to_seat) == (player_id, target)
+        else "вручную"
+    )
+    was = _seat_details(registration)
     _sit(registration, target)
+    action_log.record(
+        session,
+        tournament,
+        admin,
+        "moved",
+        now,
+        player_id=player_id,
+        details=f"{_seat_change(was, registration)}, {how}",
+    )
     return _saved(session, tournament, now)

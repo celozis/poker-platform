@@ -465,3 +465,41 @@ class ClubReport(BaseModel):
     # a position, again the first ten.
     top_by_points: list[RatingRow]
     top_by_tournaments: list[RatingRow]
+
+
+# What an action log entry records was done (app/action_log.py).
+LoggedAction = Literal[
+    "registered",
+    "registration_cancelled",
+    "checked_in",
+    "check_in_undone",
+    "started",
+    "paused",
+    "resumed",
+    "level_changed",
+    "knocked_out",
+    "knock_out_undone",
+    "reentry",
+    "addon",
+    "seated_late",
+    "moved",
+    "final_table",
+    "place_corrected",
+    "storno",
+    "payment_method_changed",
+    "tournament_edited",
+    "tournament_cancelled",
+]
+
+
+class ActionLogEntryOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    created_at: Annotated[AwareDatetime, AfterValidator(_in_utc)]
+    # Who did it; None when the player did it themselves, in the bot.
+    admin: AdminOut | None
+    # The player it was done to, if any.
+    player: PlayerOut | None
+    action: LoggedAction
+    details: str

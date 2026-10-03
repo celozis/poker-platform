@@ -25,6 +25,7 @@ from app import (
     reports,
     results,
     tournament_changes,
+    tournament_log,
     tournaments,
 )
 from app.db import get_session
@@ -63,6 +64,7 @@ app.include_router(cashier.router)
 app.include_router(reports.router)
 app.include_router(tournament_changes.router)
 app.include_router(cabinet.router)
+app.include_router(tournament_log.router)
 
 
 class Health(BaseModel):

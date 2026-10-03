@@ -11,7 +11,7 @@ from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session, contains_eager
 
-from app import realtime
+from app import action_log, realtime
 from app.auth import CurrentAdmin, DbSession, Now
 from app.clubs import AdminClub
 from app.game import late_registration_closed_because
@@ -110,7 +110,12 @@ def list_registrations(
 
 @router.post("", status_code=status.HTTP_201_CREATED)
 def register_player(
-    tournament_id: int, body: RegistrationIn, club: AdminClub, session: DbSession, now: Now
+    tournament_id: int,
+    body: RegistrationIn,
+    club: AdminClub,
+    admin: CurrentAdmin,
+    session: DbSession,
+    now: Now,
 ) -> RegistrationOut:
     tournament = club_tournament(session, club, tournament_id, for_update=True)
     closed = registration_closed_because(tournament, now)
@@ -126,6 +131,7 @@ def register_player(
         club_id=club.id, tournament_id=tournament.id, player_id=player.id, registered_at=now
     )
     session.add(registration)
+    action_log.record(session, tournament, admin, "registered", now, player_id=player.id)
     realtime.tournament_changed(session, tournament.id)
     session.commit()
     return RegistrationOut.model_validate(registration)
@@ -154,6 +160,15 @@ def cancel_registration(
         raise HTTPException(status.HTTP_409_CONFLICT, closed)
     session.delete(_registered(session, tournament, player_id))
     refunded = give_buy_ins_back(session, tournament, admin, now, player_id)
+    action_log.record(
+        session,
+        tournament,
+        admin,
+        "registration_cancelled",
+        now,
+        player_id=player_id,
+        details=action_log.given_back(refunded),
+    )
     realtime.tournament_changed(session, tournament.id)
     session.commit()
     return Refund(refunded=refunded)
@@ -184,8 +199,17 @@ def check_in(
     """Marks the player as come to the club; they pay the buy-in then."""
     tournament, registration = _check_in_open(session, club, tournament_id, player_id, now)
     if registration.checked_in_at is None:
-        take_payment(session, tournament, player_id, "buy_in", payment, admin, now)
+        paid = take_payment(session, tournament, player_id, "buy_in", payment, admin, now)
         registration.checked_in_at = now
+        action_log.record(
+            session,
+            tournament,
+            admin,
+            "checked_in",
+            now,
+            player_id=player_id,
+            details=action_log.paid(paid),
+        )
     realtime.tournament_changed(session, tournament.id)
     session.commit()
     return RegistrationOut.model_validate(registration)
@@ -207,6 +231,15 @@ def undo_check_in(
     if registration.checked_in_at is not None:
         refunded = give_buy_ins_back(session, tournament, admin, now, player_id)
         registration.checked_in_at = None
+        action_log.record(
+            session,
+            tournament,
+            admin,
+            "check_in_undone",
+            now,
+            player_id=player_id,
+            details=action_log.given_back(refunded),
+        )
     realtime.tournament_changed(session, tournament.id)
     session.commit()
     return CheckInUndone(

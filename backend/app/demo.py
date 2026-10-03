@@ -11,8 +11,10 @@ Telegram-linked players stay; a linked player plays in the demo tournaments of �
 bot sends them a result and a reminder.
 
 Everything goes through the API, as admins would do it, with the clock set back in time: seating,
-places, points, the cashier and the blind clocks are what the system itself worked out. Games
-going on now were started earlier and played up to this minute, so their clocks run on."""
+places, points, the cashier, the action log and the blind clocks are what the system itself
+worked out. A few players sign up and drop out by the bot's own rules, so the action log shows
+what players did themselves too. Games going on now were started earlier and played up to this
+minute, so their clocks run on."""
 
 import random
 from collections.abc import Callable
@@ -26,9 +28,11 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.auth import get_clock, new_session_token
+from app.bot import conversation
 from app.db import SessionLocal
 from app.main import app
 from app.models import (
+    ActionLogEntry,
     Admin,
     AdminSession,
     Club,
@@ -126,6 +130,12 @@ class Spec:
     # Of `players`, how many have already come to a coming or cancelled tournament.
     come: int = 0
     undo_check_in: bool = False
+    # Of `players`, how many signed up in the bot themselves; and whether one more player signed
+    # up there and then dropped out.
+    bot_sign_ups: int = 0
+    bot_drop_out: bool = False
+    # The buy-in the owner changes the coming tournament to after the sign-ups.
+    new_buy_in: int | None = None
     undo_knock_out: bool = False
     cashier_fixes: bool = False
     # A finished tournament's place corrected: (the place it was, the place it becomes).
@@ -251,8 +261,23 @@ class Demo:
         signed_late = spec.late_players[: len(spec.late_players) // 2]
         for index, number in enumerate(spec.players + spec.no_shows + signed_late):
             self.at(created + timedelta(hours=1, seconds=20 * index))
+            if index < spec.bot_sign_ups:
+                self.in_the_bot(conversation.sign_up, spec, tournament["id"], number)
+                continue
             self.someone_of(spec.club)
             self.call("POST", f"{url}/registrations", {"player_id": self.player_ids[number]})
+        if spec.bot_drop_out:
+            # Someone of the club not playing in it changes their mind an hour later.
+            playing = spec.players + spec.no_shows + spec.late_players
+            number = next(n for n in CLUB_PLAYERS[spec.club] if n not in playing)
+            self.at(created + timedelta(hours=2))
+            self.in_the_bot(conversation.sign_up, spec, tournament["id"], number)
+            self.at(created + timedelta(hours=3))
+            self.in_the_bot(conversation.drop_out, spec, tournament["id"], number)
+        if spec.new_buy_in is not None:
+            self.at(created + timedelta(hours=4))
+            self.act_as(self.staff[spec.club][-1])
+            self.call("PUT", url, {**tournament, "buy_in": spec.new_buy_in})
 
         if spec.outcome == "scheduled":
             moment = max(spec.starts - timedelta(hours=11), self.real_now - timedelta(minutes=40))
@@ -269,6 +294,22 @@ class Demo:
         if spec.outcome == "waiting":
             return
         self.play(spec, url, tournament["structure"])
+
+    def in_the_bot(
+        self,
+        step: Callable[[Session, TelegramUser, int, datetime], object],
+        spec: Spec,
+        tournament_id: int,
+        number: int,
+    ) -> None:
+        """The player signs up or drops out in the bot, by the bot's own rules. Their Telegram
+        user is made up and never saved, so the bot has no one to send anything to."""
+        with SessionLocal() as session:
+            user = TelegramUser(telegram_id=0, consent_given_at=self.clock.now)
+            user.player = session.get(Player, self.player_ids[number])
+            user.club = session.get(Club, self.club_ids[spec.club])
+            step(session, user, tournament_id, self.clock.now)
+            session.commit()
 
     def check_in(self, spec: Spec, url: str, numbers: list[int], moment: datetime) -> None:
         # Check-in opens 12 hours before the start, and nobody comes later than now.
@@ -430,11 +471,16 @@ def level_starts(structure: list[dict[str, Any]]) -> dict[int, float]:
 
 def reset(session: Session) -> None:
     """Deletes every tournament and every player not linked to a Telegram account."""
+    linked = select(TelegramUser.player_id).where(TelegramUser.player_id.is_not(None))
+    unlinked = select(Player.id).where(Player.id.not_in(linked))
+    session.execute(
+        delete(ActionLogEntry).where(
+            ActionLogEntry.tournament_id.is_not(None) | ActionLogEntry.player_id.in_(unlinked)
+        )
+    )
     session.execute(delete(Transaction))
     session.execute(delete(Registration))
     session.execute(delete(Tournament))
-    linked = select(TelegramUser.player_id).where(TelegramUser.player_id.is_not(None))
-    unlinked = select(Player.id).where(Player.id.not_in(linked))
     session.execute(delete(ClubPlayer).where(ClubPlayer.player_id.in_(unlinked)))
     session.execute(delete(Player).where(Player.id.in_(unlinked)))
     session.commit()
@@ -489,14 +535,16 @@ def specs(now: datetime, misha: list[int]) -> list[Spec]:
         Spec(ob, "Турбо-серия", ago(55), "running", template="turbo", buy_in=1500, seats=5,
              reentry=4, addon=3, addon_stack=20000, addon_price=1000, late=6,
              players=list(range(0, 13)), no_shows=[15], late_players=[13, 14], reentries=2,
-             left=9, undo_knock_out=True),
+             left=9, undo_knock_out=True, bot_sign_ups=4, bot_drop_out=True),
         Spec(ob, "Хайроллер", ago(130), "paused", buy_in=5000, stack=30000,
              reentry=2, addon=2, addon_stack=30000, addon_price=3000, late=3,
              players=list(range(16, 26)), reentries=1, addon_share=0.8, left=6),
         Spec(ob, "Экспресс-турнир", ago(25), "waiting", template="turbo", buy_in=1000,
              seats=6, reentry=2, addon=None, late=3, players=list(range(26, 33))),
-        Spec(ob, "Кубок новичков", ahead(200), "scheduled", players=list(range(14, 26))),
-        Spec(ob, "Турнир четверга", day(2, 19), "scheduled", players=list(range(0, 11))),
+        Spec(ob, "Кубок новичков", ahead(200), "scheduled", players=list(range(14, 26)),
+             bot_sign_ups=5, bot_drop_out=True),
+        Spec(ob, "Турнир четверга", day(2, 19), "scheduled", players=list(range(0, 11)),
+             new_buy_in=2500),
         Spec(ob, "Большой субботний турнир", day(5, 16), "scheduled", buy_in=3500,
              stack=30000, seats=10, reentry=4, addon=4, addon_stack=50000, addon_price=2000,
              late=5, players=[0, 2, 4, 6, 8]),

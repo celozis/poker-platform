@@ -536,6 +536,52 @@ export async function changePaymentMethod(
   return accepted(await postJson(url, { payment_method: method }));
 }
 
+/** What an action log entry records was done; see backend/app/schemas.py LoggedAction. */
+export type LoggedAction =
+  | "registered"
+  | "registration_cancelled"
+  | "checked_in"
+  | "check_in_undone"
+  | "started"
+  | "paused"
+  | "resumed"
+  | "level_changed"
+  | "knocked_out"
+  | "knock_out_undone"
+  | "reentry"
+  | "addon"
+  | "seated_late"
+  | "moved"
+  | "final_table"
+  | "place_corrected"
+  | "storno"
+  | "payment_method_changed"
+  | "tournament_edited"
+  | "tournament_cancelled";
+
+/** One thing done to the tournament. `admin` is null when the player did it themselves, in the
+ * bot; `player` is null for what was done to the tournament as a whole. */
+export type ActionLogEntry = {
+  id: number;
+  created_at: string;
+  admin: Admin | null;
+  player: Player | null;
+  action: LoggedAction;
+  details: string;
+};
+
+/** The tournament's action log, the latest first; only what was done to the player, if given. */
+export async function fetchActionLog(
+  clubId: number,
+  tournamentId: number,
+  playerId?: number,
+): Promise<ActionLogEntry[]> {
+  const filter = playerId === undefined ? "" : `?player_id=${playerId}`;
+  const response = await fetch(`${tournamentUrl(clubId, tournamentId)}/log${filter}`);
+  if (!response.ok) throw failed(response);
+  return response.json();
+}
+
 /** The days of an owner's report, both included, as "2026-09-01". */
 export type ReportPeriod = { from: string; to: string };
 

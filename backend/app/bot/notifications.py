@@ -18,9 +18,10 @@ from aiogram.exceptions import TelegramAPIError
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.bot.conversation import date_and_time, roubles
+from app.bot.conversation import date_and_time
 from app.db import SessionLocal
 from app.models import Club, Registration, TelegramUser, Tournament
+from app.transactions import roubles
 
 logger = logging.getLogger("app.bot")
 

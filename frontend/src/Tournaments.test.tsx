@@ -45,7 +45,7 @@ describe("club tournaments", () => {
     const live = await screen.findByRole("region", { name: "Идут сейчас" });
     const saturday = within(live).getByRole("listitem", { name: "Субботний турнир" });
     expect(saturday).toHaveTextContent("Идёт");
-    expect(buttonNames(saturday)).toEqual(["Регистрации", "Проведение", "Касса"]);
+    expect(buttonNames(saturday)).toEqual(["Регистрации", "Проведение", "Касса", "Журнал"]);
 
     const upcoming = screen.getByRole("region", { name: "Предстоящие" });
     const friday = within(upcoming).getByRole("listitem", { name: "Пятничный турнир" });
@@ -56,19 +56,20 @@ describe("club tournaments", () => {
       "Регистрации",
       "Проведение",
       "Касса",
+      "Журнал",
       "Изменить",
       "Отменить турнир",
     ]);
     const cancelled = within(upcoming).getByRole("listitem", { name: "Отменённый турнир" });
     expect(cancelled).toHaveTextContent("Отменён");
-    expect(buttonNames(cancelled)).toEqual(["Регистрации", "Касса"]);  // no running, editing or cancelling
+    expect(buttonNames(cancelled)).toEqual(["Регистрации", "Касса", "Журнал"]);  // no running, editing or cancelling
 
     const past = screen.getByRole("region", { name: "Прошедшие" });
     const summer = within(past).getByRole("listitem", { name: "Летний кубок" });
     expect(summer).toHaveTextContent("1 августа");
     expect(summer).toHaveTextContent("Завершён");
     // Results only once finished; no editing or cancelling.
-    expect(buttonNames(summer)).toEqual(["Регистрации", "Проведение", "Касса", "Результаты"]);
+    expect(buttonNames(summer)).toEqual(["Регистрации", "Проведение", "Касса", "Журнал", "Результаты"]);
   });
 
   it("shows no live section while nothing is running", async () => {
@@ -215,7 +216,7 @@ describe("club tournaments", () => {
       expect.stringContaining("Бай-ины пришедших игроков будут сторнированы"),
     );
     expect(await within(row).findByText("Отменён")).toBeInTheDocument();
-    expect(buttonNames(row)).toEqual(["Регистрации", "Касса"]);  // no editing or cancelling
+    expect(buttonNames(row)).toEqual(["Регистрации", "Касса", "Журнал"]);  // no editing or cancelling
     expect(fetch).toHaveBeenCalledWith(
       "/api/clubs/7/tournaments/5/cancel",
       expect.objectContaining({ method: "POST" }),

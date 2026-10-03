@@ -35,6 +35,7 @@ export default function GamePage({
   onBack,
   onResults,
   onCashier,
+  onLog,
 }: {
   club: Club;
   tournament: Tournament;
@@ -43,6 +44,8 @@ export default function GamePage({
   onResults: () => void;
   /** Opens the tournament's cashier, where the payments taken here are seen and put right. */
   onCashier: () => void;
+  /** Opens the tournament's action log: who did what here, and when. */
+  onLog: () => void;
 }) {
   const [loaded, setLoaded] = useState<Loaded | null>(null);
   const [loadFailed, setLoadFailed] = useState(false);
@@ -128,6 +131,13 @@ export default function GamePage({
               className="rounded-lg border border-slate-300 px-4 py-2 font-medium text-slate-700"
             >
               Касса
+            </button>
+            <button
+              type="button"
+              onClick={onLog}
+              className="rounded-lg border border-slate-300 px-4 py-2 font-medium text-slate-700"
+            >
+              Журнал
             </button>
             <button
               type="button"

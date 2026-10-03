@@ -163,6 +163,9 @@ _Avoid_: Payment record, entry (for the money)
 
 **Player Session**: The same for a player logged in to the Web Cabinet, in a cookie of its own that only the cabinet's addresses get. It opens nothing of the Admin Panel, and an Admin Session nothing of the cabinet.
 
+**Action Log (журнал действий)**: What was done at the club, entry by entry: when, who did it (the admin, or «игрок» for what the player did themselves in the bot), what was done, to which player, and the details (from which seat to which, how much was paid or given back, which level the clock moved from and to). A tournament's log is what was done to it, from the first sign-up to a place corrected after the end; the admin reads it the latest first and can narrow it to one player, to settle a dispute. Written by the action itself, so an action is in the log if and only if it was done; an entry is never changed or deleted (ADR-0014). What is done to the club rather than to a tournament (its Team and Club Settings) will go in the club's log, an entry without a tournament; there is no such action yet.
+_Avoid_: Audit trail, history (the Cashier's operations are the history of the money)
+
 **Floor Manager (Флор-менеджер)**: Oversees the game floor: resolves disputes, calls dealer rotations, enforces rules.
 
 **Dealer (Диллер)**: Sits at a table, manages the game state, collects antes, and reports results.
@@ -214,6 +217,7 @@ _Avoid_: Tabletop
 - **Running a tournament**: the game lives in the tournament row (status, blind clock) and in its registrations (seat, finish order, re-entries, add-ons); the blind clock is worked out from the time, with no background job (ADR-0006).
 - **Cashier**: every paid action writes a row to `transactions` (`app/transactions.py`); a storno is another row pointing at the one it reverses. The cashier's summary and the CSV are worked out from the rows on every request (`app/cashier.py`, ADR-0009).
 - **Web Cabinet**: `/api/cabinet` (`app/cabinet.py`): login, logout and the whole cabinet in one `GET`, for the player of the Player Session. Sending and checking login codes and making session tokens are shared with the admin login (`app/auth.py`); the club schedule with the bot (`app/schedule.py`); the club rating's `club_standings` with the admin panel and the bot (ADR-0012).
+- **Action log**: every action writes a row to `action_log` in the database transaction that makes the change (`app/action_log.py`, which depends on no routes, like `app/transactions.py`); the admin reads a tournament's at `/api/clubs/{club_id}/tournaments/{id}/log`, optionally `?player_id=` (`app/tournament_log.py`). There is no route that changes or deletes an entry (ADR-0014).
 - **Owner's reports**: `/api/clubs/{club_id}/reports` and `.csv` (`app/reports.py`), behind `OwnerClub`, which lets through only the club's own owner (ADR-0013). The money comes from `transactions` with the cashier's `kind_totals` and `method_totals`, the best players from the rating's `club_standings`.
 - **Results and rating**: the last knock-out fixes every player's place and points in their registration; a place correction rewrites them. The club rating adds the points up per season on every request, with no table of its own (ADR-0008).
 - **Realtime**: a change of a tournament, in the backend or the bot, sends PostgreSQL `NOTIFY tournament_changed` in its own transaction, delivered once it commits; every backend process `LISTEN`s and wakes its watchers (`app/realtime.py`). Each connected hall board then reads the board afresh and gets it over its WebSocket (ADR-0007); an admin panel page gets `changed` over `/api/clubs/{club_id}/tournaments/{id}/ws` and reads afresh (ADR-0011).
@@ -298,7 +302,7 @@ docker compose logs backend | grep "Код входа"
 docker compose exec backend python -m app.demo
 ```
 
-It plays everything through the API with the clock set back (`app/demo.py`), so places, points, cashiers and blind clocks are the system's own. Demo players' phones are +7 913 500-00-01 … -60. More staff: Сергей Лебедев +7 999 000-00-21 (admin, «Обь»), Ольга Кравец +7 999 000-00-22 (admin, «Енисей»), Павел Громов +7 999 000-00-03 (admin, «Томь»), Наталья Широкова +7 999 000-00-13 (owner, «Томь»). A Telegram-linked player plays in the tournaments of «Енисей», so the bot sends them a result and a reminder.
+It plays everything through the API with the clock set back (`app/demo.py`), so places, points, cashiers, action logs and blind clocks are the system's own; a few players of «Обь» sign up and drop out by the bot's own rules, so the logs of «Турбо-серия» and «Кубок новичков» show «игрок» too. Demo players' phones are +7 913 500-00-01 … -60. More staff: Сергей Лебедев +7 999 000-00-21 (admin, «Обь»), Ольга Кравец +7 999 000-00-22 (admin, «Енисей»), Павел Громов +7 999 000-00-03 (admin, «Томь»), Наталья Широкова +7 999 000-00-13 (owner, «Томь»). A Telegram-linked player plays in the tournaments of «Енисей», so the bot sends them a result and a reminder.
 
 ### Running tests
 

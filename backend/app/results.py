@@ -11,7 +11,8 @@ from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import contains_eager
 
-from app.auth import DbSession
+from app import action_log
+from app.auth import CurrentAdmin, DbSession, Now
 from app.clubs import AdminClub
 from app.models import Registration, Tournament
 from app.points import points
@@ -55,7 +56,13 @@ def get_results(tournament_id: int, club: AdminClub, session: DbSession) -> Tour
 
 @router.put("/{player_id}")
 def correct_place(
-    tournament_id: int, player_id: int, body: PlaceIn, club: AdminClub, session: DbSession
+    tournament_id: int,
+    player_id: int,
+    body: PlaceIn,
+    club: AdminClub,
+    admin: CurrentAdmin,
+    session: DbSession,
+    now: Now,
 ) -> TournamentResults:
     """Puts the player on the place they really finished in: those between the old place and the
     new one move up or down by one, as if that one knock-out had been marked at the right time.
@@ -74,8 +81,19 @@ def correct_place(
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_CONTENT, [f"Место: от 1 до {len(results)}"]
         )
+    was = registration.place
     results.remove(registration)
     results.insert(body.place - 1, registration)
     rank(results)
+    if body.place != was:
+        action_log.record(
+            session,
+            tournament,
+            admin,
+            "place_corrected",
+            now,
+            player_id=player_id,
+            details=f"Место {was} → {body.place}",
+        )
     session.commit()
     return _tournament_results(tournament, results)

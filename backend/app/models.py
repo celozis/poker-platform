@@ -241,3 +241,29 @@ class Transaction(Base):
 
     player: Mapped[Player] = relationship()
     admin: Mapped[Admin] = relationship()
+
+
+class ActionLogEntry(Base):
+    """One thing done at the club: who did it (an admin, or the player themselves in the bot),
+    to which player, and when, so that a dispute can be settled (app/action_log.py). Written by
+    the action itself, in its transaction. Entries are only ever added, like transactions."""
+
+    __tablename__ = "action_log"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    club_id: Mapped[int] = mapped_column(ForeignKey("clubs.id"), index=True)
+    # None for what is done to the club rather than to a tournament, such as its team.
+    tournament_id: Mapped[int | None] = mapped_column(ForeignKey("tournaments.id"), index=True)
+    # None when the player did it themselves.
+    admin_id: Mapped[int | None] = mapped_column(ForeignKey("admins.id"))
+    # The player it was done to, if any.
+    player_id: Mapped[int | None] = mapped_column(ForeignKey("players.id"), index=True)
+    # What was done: schemas.LoggedAction.
+    action: Mapped[str] = mapped_column(String(30))
+    # What else tells the action apart, as the admin reads it: "Стол 2, место 3 → стол 1,
+    # место 5". Written when the action is done, so it stays as it was then.
+    details: Mapped[str] = mapped_column(String(500), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+    admin: Mapped[Admin | None] = relationship()
+    player: Mapped[Player | None] = relationship()

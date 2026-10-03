@@ -23,7 +23,7 @@ from sqlalchemy import select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
-from app import realtime
+from app import action_log, realtime
 from app.auth import normalize_phone
 from app.models import Club, Registration, TelegramUser, Tournament
 from app.players import add_to_club_list, league_player
@@ -35,6 +35,7 @@ from app.registrations import (
 from app.rating import club_standings
 from app.schedule import club_schedule
 from app.seasons import LEAGUE_TIME, season_at
+from app.transactions import roubles
 
 GREETING = (
     "Здравствуйте! Это бот Сибирской лиги покера. "
@@ -234,10 +235,6 @@ def _short_date(moment: datetime) -> str:
     return f"{local.day}.{local.month:02}"
 
 
-def roubles(amount: int) -> str:
-    return f"{amount:,}".replace(",", " ") + " ₽"
-
-
 def _schedule(session: Session, user: TelegramUser, club: Club, now: datetime) -> Reply:
     """The club's schedule (app/schedule.py), each tournament with a button to sign up or, for one
     the player is signed up for, to drop out."""
@@ -338,6 +335,7 @@ def sign_up(
             registered_at=now,
         )
     )
+    action_log.record(session, tournament, None, "registered", now, player_id=user.player.id)
     session.flush()
     # The admin panel shows the player at once, although the bot is a process of its own.
     realtime.tournament_changed(session, tournament.id)
@@ -371,6 +369,9 @@ def drop_out(
         )
         return _with_schedule(session, user, now, paid)
     session.delete(registration)
+    action_log.record(
+        session, tournament, None, "registration_cancelled", now, player_id=user.player.id
+    )
     session.flush()
     realtime.tournament_changed(session, tournament.id)
     return _with_schedule(session, user, now, Reply(f"Запись на турнир «{tournament.name}» отменена."))

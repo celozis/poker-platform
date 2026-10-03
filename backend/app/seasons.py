@@ -14,6 +14,11 @@ from datetime import date, datetime, timedelta, timezone
 LEAGUE_TIME = timezone(timedelta(hours=7))
 
 
+def league_time_text(moment: datetime) -> str:
+    """"03.10.2026 19:00": in the league's time, as the clubs' clocks show it."""
+    return moment.astimezone(LEAGUE_TIME).strftime("%d.%m.%Y %H:%M")
+
+
 @dataclass(frozen=True)
 class Season:
     # The year and its half, such as "2026-2".

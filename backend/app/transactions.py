@@ -14,6 +14,17 @@ from sqlalchemy.orm import Session
 from app.models import Admin, Tournament, Transaction
 from app.schemas import PaymentIn, PaymentMethod, TransactionKind
 
+PAID_BY = {"cash": "наличными", "card": "картой"}
+
+
+def thousands(number: int) -> str:
+    """"20 000": digits grouped as Russians write them."""
+    return f"{number:,}".replace(",", " ")
+
+
+def roubles(amount: int) -> str:
+    return f"{thousands(amount)} ₽"
+
 
 def price(tournament: Tournament, kind: TransactionKind) -> int:
     """What the operation costs by the tournament's rules: a re-entry buys the player in again."""
@@ -34,21 +45,21 @@ def _add(
     *,
     reverses: Transaction | None = None,
     replaces: Transaction | None = None,
-) -> None:
-    session.add(
-        Transaction(
-            club_id=tournament.club_id,
-            tournament_id=tournament.id,
-            player_id=player_id,
-            admin_id=admin.id,
-            kind=kind,
-            amount=amount,
-            payment_method=payment_method,
-            created_at=now,
-            reverses_id=None if reverses is None else reverses.id,
-            replaces_id=None if replaces is None else replaces.id,
-        )
+) -> Transaction:
+    transaction = Transaction(
+        club_id=tournament.club_id,
+        tournament_id=tournament.id,
+        player_id=player_id,
+        admin_id=admin.id,
+        kind=kind,
+        amount=amount,
+        payment_method=payment_method,
+        created_at=now,
+        reverses_id=None if reverses is None else reverses.id,
+        replaces_id=None if replaces is None else replaces.id,
     )
+    session.add(transaction)
+    return transaction
 
 
 def take_payment(
@@ -59,17 +70,17 @@ def take_payment(
     payment: PaymentIn | None,
     admin: Admin,
     now: datetime,
-) -> None:
+) -> Transaction | None:
     """Records the payment for the operation at the tournament's price; nothing when it is free.
     Call it before changing anything, so that a missing payment method refuses the operation."""
     amount = price(tournament, kind)
     if amount == 0:
-        return
+        return None
     if payment is None or payment.payment_method is None:
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_CONTENT, ["Укажите способ оплаты: наличные или карта"]
         )
-    _add(session, tournament, player_id, kind, amount, payment.payment_method, admin, now)
+    return _add(session, tournament, player_id, kind, amount, payment.payment_method, admin, now)
 
 
 def reverse(

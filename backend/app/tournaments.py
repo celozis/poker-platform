@@ -7,13 +7,14 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import select, update
 
-from app import realtime
+from app import action_log, realtime
 from app.auth import CurrentAdmin, DbSession, Now
 from app.clubs import AdminClub
 from app.models import Club, Registration, Tournament
 from app.schemas import TournamentIn, TournamentList, TournamentOut
+from app.seasons import league_time_text
 from app.tournament_rules import tournament_errors
-from app.transactions import give_buy_ins_back
+from app.transactions import give_buy_ins_back, roubles, thousands
 
 router = APIRouter(prefix="/api/clubs/{club_id}/tournaments")
 
@@ -43,6 +44,48 @@ def _checked(tournament: TournamentIn, now: datetime) -> dict[str, Any]:
         fields["addon_stack"] = None
         fields["addon_price"] = None
     return fields
+
+
+# The tournament's fields as the action log names them; the structure is only said to have changed.
+_FIELD_NAMES = {
+    "name": "Название",
+    "starts_at": "Начало",
+    "buy_in": "Бай-ин",
+    "starting_stack": "Стартовый стек",
+    "reentry_until_level": "Re-entry до уровня",
+    "addon_at_level": "Add-on на уровне",
+    "addon_stack": "Фишки add-on",
+    "addon_price": "Цена add-on",
+    "late_registration_until_level": "Поздняя регистрация до уровня",
+    "seats_per_table": "Мест за столом",
+}
+_MONEY_FIELDS = ("buy_in", "addon_price")
+
+
+def _shown(field: str, value: Any) -> str:
+    if value is None:
+        return "нет"
+    if isinstance(value, datetime):
+        return league_time_text(value)
+    if field in _MONEY_FIELDS:
+        return roubles(value)
+    if isinstance(value, int):
+        return thousands(value)
+    return str(value)
+
+
+def _changes(tournament: Tournament, fields: dict[str, Any]) -> list[str]:
+    """What saving these fields changes, as the action log says it: "Бай-ин: 2 000 ₽ → 2 500 ₽"."""
+    changes = []
+    for field, value in fields.items():
+        was = getattr(tournament, field)
+        if was == value:
+            continue
+        if field == "structure":
+            changes.append("Структура блайндов")
+        else:
+            changes.append(f"{_FIELD_NAMES[field]}: {_shown(field, was)} → {_shown(field, value)}")
+    return changes
 
 
 def _section(tournament: Tournament, now: datetime) -> str:
@@ -79,7 +122,12 @@ def create_tournament(
 
 @router.put("/{tournament_id}")
 def update_tournament(
-    tournament_id: int, body: TournamentIn, club: AdminClub, session: DbSession, now: Now
+    tournament_id: int,
+    body: TournamentIn,
+    club: AdminClub,
+    admin: CurrentAdmin,
+    session: DbSession,
+    now: Now,
 ) -> TournamentOut:
     tournament = club_tournament(session, club, tournament_id, for_update=True)
     if tournament.has_started:
@@ -87,7 +135,11 @@ def update_tournament(
     if tournament.status == "cancelled":
         raise HTTPException(status.HTTP_409_CONFLICT, "Турнир отменён, его нельзя изменить")
     starts_at = tournament.starts_at
-    for field, value in _checked(body, now).items():
+    fields = _checked(body, now)
+    changes = _changes(tournament, fields)
+    if changes:
+        action_log.record(session, tournament, admin, "tournament_edited", now, details="; ".join(changes))
+    for field, value in fields.items():
         setattr(tournament, field, value)
     if tournament.starts_at != starts_at:
         # The players are reminded again, of the new time (app/bot/notifications.py).
@@ -110,7 +162,15 @@ def cancel_tournament(
     if tournament.has_started:
         raise HTTPException(status.HTTP_409_CONFLICT, "Турнир уже начался, его нельзя отменить")
     tournament.status = "cancelled"
-    give_buy_ins_back(session, tournament, admin, now)
+    refunded = give_buy_ins_back(session, tournament, admin, now)
+    action_log.record(
+        session,
+        tournament,
+        admin,
+        "tournament_cancelled",
+        now,
+        details=action_log.given_back(refunded),
+    )
     realtime.tournament_changed(session, tournament.id)
     session.commit()
     return TournamentOut.model_validate(tournament)
