@@ -29,9 +29,15 @@ We're building a system to replace manual tournament management (spreadsheets, c
 
 **League (Сибирская лига покера)**: The network that ties clubs together. Clubs operate independently but share a unified rating (club-level, city-level, Russia/CIS-level).
 
+What is the league's to decide (which clubs there are, their names, who owns each) has no screen yet: the developer does it at the league's request.
+
 **Network**: The set of all clubs in the league.
 
 **Club Branding**: A club's logo and two colours (primary, accent). The Admin Panel is dressed in the admin's club branding; the league mark is always shown next to it.
+
+**Club Settings (настройки клуба)**: What the club's Owner sets for the club: its Club Branding, the hall board's background, its address and the contact for players (the admins' phone or Telegram). The club's name is not among them: players across the league know the club by it, so only the league changes it.
+
+**Sport Poker Notice (дисклеймер)**: «Спортивный покер. Игра не на деньги: взнос организационный, денежных призов нет. 18+». Shown at the bottom of the hall board and the Web Cabinet, and in the bot's greeting.
 
 **Tenant**: A club, as the unit of data isolation. Club-owned rows carry `club_id`; an admin reaches only their own club's data (ADR-0003).
 
@@ -39,11 +45,20 @@ We're building a system to replace manual tournament management (spreadsheets, c
 
 **Player**: A person who plays tournaments. Has a profile (phone, name, Telegram/VK ID), status (Guest → Regular → VIP, per ЮДС loyalty system), and rating. One player per phone number across the whole league: a person who plays in several clubs is the same player everywhere (ADR-0005).
 
-**Club Player List**: The players who have been to a club or chose it as their club in the bot. An admin sees, searches and registers only their own club's players. Entering a phone the league already knows adds that player to the club instead of creating a second one; the existing name is kept.
+**Club Player List**: The players who have been to a club, chose it as their club in the bot, or signed up for one of its tournaments. An admin sees, searches and registers only their own club's players. Entering a phone the league already knows adds that player to the club instead of creating a second one; the existing name is kept.
 
 **Consent (согласие на обработку персональных данных)**: The player's agreement to the processing of personal data under 152-ФЗ. The admin ticks it when adding a player; without it no player is added. In the bot the player gives it themselves, before anything else; without it the bot goes no further.
 
+**Site Registration (регистрация на сайте)**: A person whose phone the league does not know registers in the Web Cabinet: first name, surname, Nickname (optional) and Consent, then the Login Code. They choose no club: they see every club's schedule and join a club's list on first signing up for its tournament.
+
 **Telegram Link (привязка Telegram)**: A player's Telegram account tied to their player by the phone they share with the bot. Only the user's own contact counts, as Telegram confirms that number is theirs. A phone the league knows links to that player, keeping the name the club typed; a new phone makes a new player named as in Telegram. One Telegram account per player: the account that last shared the phone.
+
+**Player's Name**: First name and surname, entered as two fields on the site and in the admin's player form; a name from Telegram, or one typed before, is kept as it came. Only staff change it, so the club always knows who the player really is.
+
+**Nickname (ник)**: A name a player chooses to be known by in public, instead of their real name. Optional. Given when registering on the site, typed by the admin, or set and changed by the player in the Web Cabinet at any time.
+
+**Public Name (публичное имя)**: How a player is shown to other players and on the club's screens: their Nickname if they have one; otherwise the first word of their name in full and the first letter of the second word ("Иван П."), or the one word if the name has only one (a Telegram name of one word is most likely a nickname already). Staff in the Admin Panel see the full name and phone.
+_Avoid_: Display name, short name
 
 **Player's Club (in the bot)**: The club the player chose in the bot: the bot shows its schedule, and the player joins its Club Player List. The player can change it (`/club`).
 
@@ -63,6 +78,10 @@ We're building a system to replace manual tournament management (spreadsheets, c
 _Avoid_: "In Progress" (say Running)
 
 **Live Tournament**: One that is Running or Paused: players are knocked out, re-enter, take add-ons and sit down.
+
+**Seat Limit (лимит мест)**: The most players a tournament takes, if the admin sets one; no limit unless set. Counts players, not entries: a re-entry takes no new place. Once it is reached, a player signing up in the bot or the cabinet goes on the Waitlist; an admin may still register a player over it (the club puts out one more table).
+
+**Waitlist (лист ожидания)**: The players who signed up for a tournament already at its Seat Limit, in the order they signed up. When a place frees up, the first of them is registered by itself and told so in the bot; one who can no longer come drops out, and the next moves up.
 
 **Seats per Table**: How many players a table of this tournament seats, from 2 to 10; 9 unless the admin says otherwise.
 
@@ -150,7 +169,9 @@ _Avoid_: Payment record, entry (for the money)
 
 **Bar Staff (Бар)**: Handles food/drink orders from the table.
 
-**Owner (Владелец клуба)**: Logs in to the Admin Panel as an admin does and can do all an admin can; alone sees the club's Reports. Belongs to exactly one club, like an admin (an admin with the role `owner`, ADR-0013). Configuring club branding is not there yet.
+**Owner (Владелец клуба)**: Logs in to the Admin Panel as an admin does and can do all an admin can; alone sees the club's Reports. Belongs to exactly one club, like an admin (an admin with the role `owner`, ADR-0013). Manages the club's Team. Configuring club branding is not there yet.
+
+**Team (команда клуба)**: The club's admins as the Owner sees them: the Owner adds an admin (name, phone) and removes one. Owners themselves are added by the league, not by another owner, since an owner sees the club's money; an owner cannot remove themselves.
 
 **Club Report (Отчёт клуба)**: What the Owner sees of the club's tournaments that start in a period they pick (days from and to, league time, up to a year): the money (the Cashier's totals added up: by kind of operation and by payment method, and the tournaments held, those started), the attendance (the players who came to each tournament held, added up week by week, Monday to Sunday, and the players per tournament on average), and the best ten players by points and by tournaments played (the Club Rating of the period). Exported to CSV for Excel. Worked out on every request.
 
@@ -164,13 +185,15 @@ _Avoid_: Payment record, entry (for the money)
 
 **Result Notice**: The bot's message to a player whose Telegram is linked once their tournament has finished: their place of how many and the points it gives in the club rating. Sent once, and only for a tournament finished within the last day, so a player who links their Telegram later is not sent old results. A place corrected afterwards is not sent again.
 
-**Web Cabinet (ЛК)**: The player's own page on the site's root address, laid out for a phone first. The player logs in by phone and Login Code (any player the league knows) and sees their profile (name, phone, their clubs, whether Telegram is linked), their position and points in the rating of each of their clubs this season, the Schedule of each of their clubs (marked where they are signed up), and the finished tournaments they played in any club, the latest first: date, tournament, club, place of how many, points, re-entries and add-ons. Which player is shown comes from the Player Session alone: no address takes a player's id (ADR-0012). VK/Telegram login is not there yet.
+**Web Cabinet (ЛК)**: The player's own page on the site's root address, laid out for a phone first. The player logs in by phone and Login Code (any player the league knows; an unknown phone goes through Site Registration first) and sees their profile (name, phone, their clubs, whether Telegram is linked), their position and points in the rating of each of their clubs this season, the Schedule of each of their clubs (marked where they are signed up), and the finished tournaments they played in any club, the latest first: date, tournament, club, place of how many, points, re-entries and add-ons. Which player is shown comes from the Player Session alone: no address takes a player's id (ADR-0012). VK/Telegram login is not there yet.
 
 **Admin Panel**: Web dashboard for admins to run tournaments, manage players, track cash. The club's Owner logs in to it too and has one more section, the Club Report (`Отчёты`).
 
 **Dealer Cabinet**: Minimal screen for dealers showing their table, seating, rotation alerts, dispute-raise button.
 
-**Hall Board (Табло)**: A full-screen page on a TV in the club's hall: the blind level and ante, the countdown, the next level, the players left and re-entries made, the average stack and the time to the next break, in the club's colours with the club's and the league's marks. No player names. Opens without login by the tournament's Board Link; every admin change reaches it in under a second over a WebSocket, and it reconnects by itself (ADR-0007).
+**Hall Board (Табло)**: A full-screen page on a TV in the club's hall: the blind level and ante, the countdown, the next level, the players left and re-entries made, the average stack and the time to the next break, in the club's colours with the club's and the league's marks. No player names, except on its Seating Screen.
+
+**Seating Screen (рассадка на ТВ)**: The hall board's second view, which the admin switches the TV to: who sits at which table and seat, by Public Name. Mostly for the start of a tournament, so players find their seats without asking at the desk. Opens without login by the tournament's Board Link; every admin change reaches it in under a second over a WebSocket, and it reconnects by itself (ADR-0007).
 _Avoid_: Tabletop
 
 **Board Link**: `/board/<board token>`, the address of a tournament's hall board. The board token (`board_token` in code) is twelve random characters, so the link cannot be guessed from the tournament's number. The admin sees the link on the tournament's running page.
