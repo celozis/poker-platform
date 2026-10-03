@@ -56,3 +56,19 @@ def test_seed_gives_each_club_an_owner(client: TestClient, caplog: pytest.LogCap
     admins_clubs = [club_of_admin(client, caplog, phone)["id"] for phone in SEEDED_ADMIN_PHONES]
     assert [owner["admin"]["role"] for owner in owners] == ["owner", "owner"]
     assert [owner["club"]["id"] for owner in owners] == admins_clubs
+
+
+def test_seeding_again_brings_back_a_seeded_admin_the_owner_removed(
+    client: TestClient, caplog: pytest.LogCaptureFixture
+) -> None:
+    seed()
+    log_in(client, caplog, SEEDED_OWNER_PHONES[0])
+    club_id = client.get("/api/auth/me").json()["club"]["id"]
+    team = client.get(f"/api/clubs/{club_id}/team").json()
+    admin = next(member for member in team if member["phone"] == SEEDED_ADMIN_PHONES[0])
+    client.delete(f"/api/clubs/{club_id}/team/{admin['id']}")
+    client.post("/api/auth/logout")
+
+    seed()
+
+    assert club_of_admin(client, caplog, SEEDED_ADMIN_PHONES[0])["id"] == club_id

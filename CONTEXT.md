@@ -29,7 +29,9 @@ We're building a system to replace manual tournament management (spreadsheets, c
 
 **League (Сибирская лига покера)**: The network that ties clubs together. Clubs operate independently but share a unified rating (club-level, city-level, Russia/CIS-level).
 
-What is the league's to decide (which clubs there are, their names, who owns each) has no screen yet: the developer does it at the league's request.
+What is the league's to decide (which clubs there are, their names, who owns each) has no screen yet: the developer does it at the league's request with the League Command.
+
+**League Command (команда лиги)**: What the developer runs inside the backend's container at the league's request: list the clubs with their owners, found a club (name, two colours; the league's mark as its logo until the owner sets one), rename a club, appoint an owner (club, name, phone) and dismiss one. Owners are taken on and let go by the same rules as the Team; the owners it appoints and dismisses and the renaming of a club are in the club's log as done by «лига» (founding a club is not logged: the club has no log before it exists). How to run it: "League command" under Running the Project.
 
 **Network**: The set of all clubs in the league.
 
@@ -165,7 +167,7 @@ _Avoid_: Payment record, entry (for the money)
 
 **Player Session**: The same for a player logged in to the Web Cabinet, in a cookie of its own that only the cabinet's addresses get. It opens nothing of the Admin Panel, and an Admin Session nothing of the cabinet.
 
-**Action Log (журнал действий)**: What was done at the club, entry by entry: when, who did it (the admin, or «игрок» for what the player did themselves in the bot), what was done, to which player, and the details (from which seat to which, how much was paid or given back, which level the clock moved from and to). A tournament's log is what was done to it, from the first sign-up to a place corrected after the end; the admin reads it the latest first and can narrow it to one player, to settle a dispute. Written by the action itself, so an action is in the log if and only if it was done; an entry is never changed or deleted (ADR-0014). What is done to the club rather than to a tournament (its Team and Club Settings) will go in the club's log, an entry without a tournament; there is no such action yet.
+**Action Log (журнал действий)**: What was done at the club, entry by entry: when, who did it (the admin, or «игрок» for what the player did themselves in the bot), what was done, to which player, and the details (from which seat to which, how much was paid or given back, which level the clock moved from and to). A tournament's log is what was done to it, from the first sign-up to a place corrected after the end; the admin reads it the latest first and can narrow it to one player, to settle a dispute. Written by the action itself, so an action is in the log if and only if it was done; an entry is never changed or deleted (ADR-0014). What is done to the club rather than to a tournament goes in the **club's log**, entries without a tournament, which only the Owner reads, below the Team: who joined the Team or left it and who did it (the owner, or «лига» for what the League Command did), the club renamed; Club Settings will join it.
 _Avoid_: Audit trail, history (the Cashier's operations are the history of the money)
 
 **Floor Manager (Флор-менеджер)**: Oversees the game floor: resolves disputes, calls dealer rotations, enforces rules.
@@ -176,7 +178,7 @@ _Avoid_: Audit trail, history (the Cashier's operations are the history of the m
 
 **Owner (Владелец клуба)**: Logs in to the Admin Panel as an admin does and can do all an admin can; alone sees the club's Reports. Belongs to exactly one club, like an admin (an admin with the role `owner`, ADR-0013). Manages the club's Team. Configuring club branding is not there yet.
 
-**Team (команда клуба)**: The club's admins as the Owner sees them: the Owner adds an admin (name, phone) and removes one. Owners themselves are added by the league, not by another owner, since an owner sees the club's money; an owner cannot remove themselves.
+**Team (команда клуба)**: The club's admins as the Owner sees them: the Owner adds an admin (name, phone) and removes one. Owners themselves are added by the league, not by another owner, since an owner sees the club's money; an owner cannot remove themselves or another owner. A removed admin is not deleted but marked with the date: they log in no more, every session of theirs ends at once, and their name stays in the Cashier and the Action Log. Adding their phone again brings them back, under the name the club knew them by, always as an admin (a former owner too). One person is staff of one club only: the phone of another club's staff member, working there or removed, is refused.
 
 **Club Report (Отчёт клуба)**: What the Owner sees of the club's tournaments that start in a period they pick (days from and to, league time, up to a year): the money (the Cashier's totals added up: by kind of operation and by payment method, and the tournaments held, those started), the attendance (the players who came to each tournament held, added up week by week, Monday to Sunday, and the players per tournament on average), and the best ten players by points and by tournaments played (the Club Rating of the period). Exported to CSV for Excel. Worked out on every request.
 
@@ -220,7 +222,8 @@ _Avoid_: Tabletop
 - **Cashier**: every paid action writes a row to `transactions` (`app/transactions.py`); a storno is another row pointing at the one it reverses. The cashier's summary and the CSV are worked out from the rows on every request (`app/cashier.py`, ADR-0009).
 - **Web Cabinet**: `/api/cabinet` (`app/cabinet.py`): login, logout and the whole cabinet in one `GET`, for the player of the Player Session. Sending and checking login codes and making session tokens are shared with the admin login (`app/auth.py`); the club schedule with the bot (`app/schedule.py`); the club rating's `club_standings` with the admin panel and the bot (ADR-0012).
 - **Action log**: every action writes a row to `action_log` in the database transaction that makes the change (`app/action_log.py`, which depends on no routes, like `app/transactions.py`); the admin reads a tournament's at `/api/clubs/{club_id}/tournaments/{id}/log`, optionally `?player_id=` (`app/tournament_log.py`). There is no route that changes or deletes an entry (ADR-0014).
-- **Owner's reports**: `/api/clubs/{club_id}/reports` and `.csv` (`app/reports.py`), behind `OwnerClub`, which lets through only the club's own owner (ADR-0013). The money comes from `transactions` with the cashier's `kind_totals` and `method_totals`, the best players from the rating's `club_standings`.
+- **Owner's reports**: `/api/clubs/{club_id}/reports` and `.csv` (`app/reports.py`), behind `OwnerClub`, which lets through only the club's own owner (ADR-0013).
+- **Team and League Command**: `/api/clubs/{club_id}/team` (list, add, remove) and the club's log `/api/clubs/{club_id}/log`, behind `OwnerClub` (`app/team.py`, `app/club_log.py`). A removed admin keeps their `admins` row with `removed_at`; login and `current_admin` skip them, and the removal deletes their sessions. The League Command (`python -m app.league`, `app/league.py`) takes owners on and lets them go with the team's own `take_on` and `let_go`; its log entries carry `by_league` (ADR-0015). The money comes from `transactions` with the cashier's `kind_totals` and `method_totals`, the best players from the rating's `club_standings`.
 - **Results and rating**: the last knock-out fixes every player's place and points in their registration; a place correction rewrites them. The club rating adds the points up per season on every request, with no table of its own (ADR-0008).
 - **Realtime**: a change of a tournament, in the backend or the bot, sends PostgreSQL `NOTIFY tournament_changed` in its own transaction, delivered once it commits; every backend process `LISTEN`s and wakes its watchers (`app/realtime.py`). Each connected hall board then reads the board afresh and gets it over its WebSocket (ADR-0007); an admin panel page gets `changed` over `/api/clubs/{club_id}/tournaments/{id}/ws` and reads afresh (ADR-0011).
 - **Bot notifications**: the bot process looks every 30 seconds for reminders and results due and sends them; each registration keeps when they were sent (`app/bot/notifications.py`, ADR-0011).
@@ -277,7 +280,8 @@ docker compose up --build
 
 ```bash
 # With the stack running (`docker compose up`, which applies migrations first),
-# create (or refresh) the two test clubs with an admin and an owner each; safe to run again
+# create (or refresh) the two test clubs with an admin and an owner each; safe to run again,
+# and brings back a seeded admin the owner removed from the team
 docker compose exec backend python -m app.seed
 ```
 
@@ -294,6 +298,37 @@ To log in, enter the phone on http://localhost:5173/admin (an owner the same way
 docker compose logs backend | grep "Код входа"
 ```
 
+### League command
+
+Clubs and their owners are the league's to decide; until the network owner has a screen (7.2 of the plan), the developer does it with the league command in the backend's container. The seed and the demo data stay as they are: the command is for real clubs. Each subcommand prints what it did; when it refuses, it prints `Не сделано: <why>`, changes nothing and exits with 1.
+
+```bash
+# 1. The clubs, their numbers, colours and owners: start here to find a club's number
+docker compose exec backend python -m app.league clubs
+#   № 1 Покер-клуб «Обь», цвета #0B3D91 и #F2A900
+#       владелец: Олег Владимиров, +7 999 000-00-11
+
+# 2. Found a club. Colours are optional (#RRGGBB; the league's #0F172A and #F59E0B otherwise);
+#    the logo is the league's mark until the owner sets one. The name must be new to the league.
+docker compose exec backend python -m app.league create-club "Покер-клуб «Иртыш»" --primary "#1E3A8A" --accent "#FBBF24"
+#   Клуб заведён: Покер-клуб «Иртыш» (№ 4)
+
+# 3. Appoint its owner by the club's number, name and phone. They log in to /admin by that phone
+#    at once and take their admins on in «Команда». A club may have more than one owner. The phone
+#    of an admin of this club makes them its owner; of another club's staff member, it is refused.
+docker compose exec backend python -m app.league appoint-owner 4 "Глеб Иртышов" "+7 999 000-00-14"
+#   Владелец клуба Покер-клуб «Иртыш» (№ 4): Глеб Иртышов, +7 999 000-00-14
+
+# 4. Rename a club (players see the new name everywhere at once)
+docker compose exec backend python -m app.league rename-club 4 "Покер-клуб «Иртыш-Арена»"
+
+# 5. Dismiss an owner by phone: they are logged out at once and log in no more. The new owner
+#    can take them back on in «Команда», as an admin.
+docker compose exec backend python -m app.league dismiss-owner "+7 999 000-00-14"
+```
+
+Appointing and dismissing owners and renaming a club are in the club's log (the owner's «Команда» section) as done by «лига». `python -m app.league --help` and `python -m app.league <subcommand> --help` list the arguments.
+
 ### Demo data
 
 ```bash
@@ -304,7 +339,7 @@ docker compose logs backend | grep "Код входа"
 docker compose exec backend python -m app.demo
 ```
 
-It plays everything through the API with the clock set back (`app/demo.py`), so places, points, cashiers, action logs and blind clocks are the system's own; a few players of «Обь» sign up and drop out by the bot's own rules, so the logs of «Турбо-серия» and «Кубок новичков» show «игрок» too. «Турнир четверга» has its registration closed to players; «Енисей-турбо» its late registration closed early (it can be opened again); the clock of «Турбо-серия» was restarted and given a minute, the paused «Хайроллер» had a minute taken off. Demo players' phones are +7 913 500-00-01 … -60. More staff: Сергей Лебедев +7 999 000-00-21 (admin, «Обь»), Ольга Кравец +7 999 000-00-22 (admin, «Енисей»), Павел Громов +7 999 000-00-03 (admin, «Томь»), Наталья Широкова +7 999 000-00-13 (owner, «Томь»). A Telegram-linked player plays in the tournaments of «Енисей», so the bot sends them a result and a reminder.
+It plays everything through the API with the clock set back (`app/demo.py`), so places, points, cashiers, action logs and blind clocks are the system's own; a few players of «Обь» sign up and drop out by the bot's own rules, so the logs of «Турбо-серия» and «Кубок новичков» show «игрок» too. «Турнир четверга» has its registration closed to players; «Енисей-турбо» its late registration closed early (it can be opened again); the clock of «Турбо-серия» was restarted and given a minute, the paused «Хайроллер» had a minute taken off. Demo players' phones are +7 913 500-00-01 … -60. More staff: Сергей Лебедев +7 999 000-00-21 (admin, «Обь»), Ольга Кравец +7 999 000-00-22 (admin, «Енисей»), Павел Громов +7 999 000-00-03 (admin, «Томь»), Наталья Широкова +7 999 000-00-13 (owner, «Томь»). «Томь» is founded and Наталья appointed by the league command's functions; the owners take the other admins on in «Команда» (each club's log shows it). Виталий Осипов +7 999 000-00-31 worked in «Обь» for months and was removed ten days ago: he cannot log in, but his name stays in the cashiers and logs of «Обь». A Telegram-linked player plays in the tournaments of «Енисей», so the bot sends them a result and a reminder.
 
 ### Running tests
 
@@ -360,5 +395,5 @@ Then `docker compose up -d bot` (or `docker compose restart bot` after changing 
 
 ---
 
-**Last updated**: 2026-09-29  
+**Last updated**: 2026-10-04  
 **Owner**: Matt Getsov

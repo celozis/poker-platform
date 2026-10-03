@@ -1,5 +1,5 @@
 """Creates the two test clubs with one admin and one owner each. Safe to run again: it updates
-in place.
+in place, and brings back a seeded admin removed from the team.
 
     python -m app.seed
 """
@@ -67,6 +67,8 @@ def seed() -> None:
                 admin.name = name
                 admin.role = role
                 admin.club_id = club.id
+                # Back in the team if the owner removed them.
+                admin.removed_at = None
                 session.add(admin)
         session.commit()
 

@@ -30,6 +30,9 @@ class Admin(Base):
     # admin, or owner: the club's owner, who can do all an admin can and also sees the club's
     # reports (app/reports.py).
     role: Mapped[str] = mapped_column(String(10), default="admin")
+    # When they were removed from the club's team (app/team.py): they no longer log in. The row
+    # stays, since the cashier and the action log point at it.
+    removed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     club: Mapped[Club] = relationship()
 
@@ -259,8 +262,10 @@ class ActionLogEntry(Base):
     club_id: Mapped[int] = mapped_column(ForeignKey("clubs.id"), index=True)
     # None for what is done to the club rather than to a tournament, such as its team.
     tournament_id: Mapped[int | None] = mapped_column(ForeignKey("tournaments.id"), index=True)
-    # None when the player did it themselves.
+    # None when the player did it themselves, or the league did (by_league).
     admin_id: Mapped[int | None] = mapped_column(ForeignKey("admins.id"))
+    # Done by the developer at the league's request (app/league.py): a club's name, its owners.
+    by_league: Mapped[bool] = mapped_column(default=False)
     # The player it was done to, if any.
     player_id: Mapped[int | None] = mapped_column(ForeignKey("players.id"), index=True)
     # What was done: schemas.LoggedAction.

@@ -16,6 +16,7 @@ from app import (
     board,
     cabinet,
     cashier,
+    club_log,
     clubs,
     game,
     players,
@@ -26,6 +27,7 @@ from app import (
     results,
     tournament_changes,
     tournament_log,
+    team,
     tournaments,
 )
 from app.db import get_session
@@ -65,6 +67,8 @@ app.include_router(reports.router)
 app.include_router(tournament_changes.router)
 app.include_router(cabinet.router)
 app.include_router(tournament_log.router)
+app.include_router(team.router)
+app.include_router(club_log.router)
 
 
 class Health(BaseModel):

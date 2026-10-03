@@ -31,10 +31,18 @@ const ACTION_NAMES: Record<LoggedAction, string> = {
   payment_method_changed: "Смена способа оплаты",
   tournament_edited: "Изменение турнира",
   tournament_cancelled: "Отмена турнира",
+  admin_added: "Сотрудник добавлен",
+  admin_returned: "Сотрудник возвращён",
+  admin_removed: "Сотрудник убран",
+  owner_appointed: "Назначен владелец",
+  owner_dismissed: "Владелец снят",
+  club_renamed: "Клуб переименован",
 };
 
-/** Who did it, as the log shows it: the admin, or the player themselves in the bot. */
+/** Who did it, as the log shows it, when no admin did: the player themselves in the bot, or the
+ * league. */
 const PLAYER_HIMSELF = "игрок";
+const THE_LEAGUE = "лига";
 
 const timeFormat = new Intl.DateTimeFormat("ru-RU", {
   day: "numeric",
@@ -134,7 +142,7 @@ export default function ActionLogPage({
               className="divide-y divide-slate-200 rounded-xl border border-slate-200"
             >
               {loaded.log.map((entry) => (
-                <Entry key={entry.id} entry={entry} />
+                <LogEntry key={entry.id} entry={entry} />
               ))}
             </ul>
           ))}
@@ -149,8 +157,9 @@ function playersIn(log: ActionLogEntry[]): Player[] {
   return [...byId.values()].sort((a, b) => a.name.localeCompare(b.name, "ru"));
 }
 
-function Entry({ entry }: { entry: ActionLogEntry }) {
-  const who = entry.admin?.name ?? PLAYER_HIMSELF;
+/** One entry of a tournament's log or of the club's own log. */
+export function LogEntry({ entry }: { entry: ActionLogEntry }) {
+  const who = entry.admin?.name ?? (entry.by_league ? THE_LEAGUE : PLAYER_HIMSELF);
   return (
     <li className="flex flex-wrap gap-x-4 gap-y-1 p-3">
       <p className="w-32 text-sm text-slate-500">{timeFormat.format(new Date(entry.created_at))}</p>

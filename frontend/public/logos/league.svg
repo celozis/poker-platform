@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!-- The Siberian Poker League's mark: a new club's logo until its owner sets one. -->
+  <circle cx="16" cy="16" r="15" fill="#0F172A"/>
+  <path d="M16 6c-3 4-8 6.5-8 11a4 4 0 0 0 7 2.6L14 25h4l-1-5.4A4 4 0 0 0 24 17c0-4.5-5-7-8-11z" fill="#E2E8F0"/>
+</svg>

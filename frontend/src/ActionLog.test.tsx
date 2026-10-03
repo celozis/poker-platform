@@ -21,7 +21,7 @@ function entry(
   details = "",
   created_at = "2026-10-02T12:05:00Z",
 ): ActionLogEntry {
-  return { id, created_at, action, player, admin, details };
+  return { id, created_at, action, player, admin, by_league: false, details };
 }
 
 // As the backend answers: the latest first. Maria signed up in the bot herself.

@@ -1,5 +1,6 @@
 import { vi } from "vitest";
 import type {
+  Admin,
   AdminRole,
   BlindTemplate,
   BoardState,
@@ -17,6 +18,7 @@ import type {
   TournamentResult,
   Transaction,
 } from "../api";
+import { formatPhone } from "../phones";
 import { FakeWebSocket } from "./fakeWebSocket";
 
 export const ME = {
@@ -161,8 +163,16 @@ type FakeBackendOptions = {
   report?: ClubReport;
   /** Action logs by tournament id, the latest first. */
   actionLogs?: Record<number, ActionLogEntry[]>;
+  /** The club's team: its owners, then its admins, each in name order. */
+  team?: Admin[];
+  /** Admins removed from the club's team, who come back when their phone is added again. */
+  removedFromTeam?: Admin[];
+  /** The club's own log, the latest first; the owner's changes of the team go on top of it. */
+  clubLog?: ActionLogEntry[];
 };
 
+const OWNER_ONLY = "Это видит только владелец клуба";
+const PHONE_FORMAT = "Телефон: нужен российский номер из 11 цифр, например +7 913 555-12-34";
 const CONSENT_MISSING = "Без согласия на обработку персональных данных игрока завести нельзя";
 
 function normalizePhone(raw: string): string | null {
@@ -204,6 +214,9 @@ export function fakeBackend({
   cashiers = {},
   report,
   actionLogs = {},
+  team = [],
+  removedFromTeam = [],
+  clubLog = [],
 }: FakeBackendOptions = {}) {
   let session = loggedIn;
   let closedToPlayers = registrationClosedToPlayers;
@@ -218,12 +231,49 @@ export function fakeBackend({
   let nextId = 100;
   const clubTournaments = `/api/clubs/${ME.club.id}/tournaments`;
   const clubPlayersUrl = `/api/clubs/${ME.club.id}/players`;
+  const teamUrl = `/api/clubs/${ME.club.id}/team`;
+  const members: Admin[] = structuredClone(team);
+  const removedMembers: Admin[] = structuredClone(removedFromTeam);
+  const clubLogEntries: ActionLogEntry[] = structuredClone(clubLog);
+
+  /** Logs a change of the team, done by the logged-in owner. */
+  function logTeamChange(action: ActionLogEntry["action"], member: Admin) {
+    clubLogEntries.unshift({
+      id: nextId++,
+      created_at: new Date().toISOString(),
+      admin: { ...ME.admin, role },
+      by_league: false,
+      player: null,
+      action,
+      details: `${member.name}, ${formatPhone(member.phone)}`,
+    });
+  }
+
+  function takeOn(body: { name: string; phone: string }) {
+    const phone = normalizePhone(body.phone);
+    const errors = [
+      ...(body.name.trim() ? [] : ["Укажите имя сотрудника"]),
+      ...(phone ? [] : [PHONE_FORMAT]),
+    ];
+    if (errors.length > 0) return json({ detail: errors }, 422);
+    const member = members.find((m) => m.phone === phone);
+    if (member) return json({ detail: `${member.name} уже в команде клуба` }, 409);
+    const removed = removedMembers.findIndex((m) => m.phone === phone);
+    const returned = removed >= 0;
+    const admin: Admin = returned
+      ? removedMembers.splice(removed, 1)[0]
+      : { id: nextId++, name: body.name.trim(), phone: phone!, role: "admin" };
+    members.push(admin);
+    logTeamChange(returned ? "admin_returned" : "admin_added", admin);
+    members.sort((a, b) => (a.role === b.role ? byName(a, b) : a.role === "owner" ? -1 : 1));
+    return json({ admin, outcome: returned ? "returned" : "added" }, returned ? 200 : 201);
+  }
 
   function addPlayer(body: { name: string; phone: string; consent: boolean }) {
     const phone = normalizePhone(body.phone);
     const errors = [
       ...(body.name.trim() ? [] : ["Укажите имя игрока"]),
-      ...(phone ? [] : ["Телефон: нужен российский номер из 11 цифр, например +7 913 555-12-34"]),
+      ...(phone ? [] : [PHONE_FORMAT]),
       ...(body.consent ? [] : [CONSENT_MISSING]),
     ];
     if (errors.length > 0) return json({ detail: errors }, 422);
@@ -489,6 +539,12 @@ export function fakeBackend({
         return json(state);
       case `POST ${clubPlayersUrl}`:
         return addPlayer(body);
+      case `GET ${teamUrl}`:
+        return role === "owner" ? json(members) : json({ detail: OWNER_ONLY }, 403);
+      case `POST ${teamUrl}`:
+        return takeOn(body);
+      case `GET /api/clubs/${ME.club.id}/log`:
+        return role === "owner" ? json(clubLogEntries) : json({ detail: OWNER_ONLY }, 403);
       case `POST ${clubTournaments}`: {
         if (rejectWith) return json({ detail: rejectWith }, 422);
         const created: Tournament = { ...body, id: nextId++, status: "scheduled" };
@@ -511,10 +567,20 @@ export function fakeBackend({
       return rating ? json(rating) : json({ detail: "Такого сезона нет" }, 404);
     }
     if (method === "GET" && pathname === `/api/clubs/${ME.club.id}/reports`) {
-      if (role !== "owner") return json({ detail: "Отчёты клуба видит только владелец" }, 403);
+      if (role !== "owner") return json({ detail: OWNER_ONLY }, 403);
       const [from, to] = [searchParams.get("from") ?? "", searchParams.get("to") ?? ""];
       if (from > to) return json({ detail: ["Период: начало позже конца"] }, 422);
       return report ? json(report) : json({ detail: "Нет отчёта" }, 500);
+    }
+    const [, memberId] = pathname.match(/^\/api\/clubs\/\d+\/team\/(\d+)$/) ?? [];
+    if (method === "DELETE" && memberId) {
+      const index = members.findIndex((m) => m.id === Number(memberId));
+      if (index < 0) return json({ detail: "Такого сотрудника в команде клуба нет" }, 404);
+      if (members[index].role === "owner") return json({ detail: "Владельцев клуба меняет лига" }, 409);
+      const [removed] = members.splice(index, 1);
+      removedMembers.push(removed);
+      logTeamChange("admin_removed", removed);
+      return new Response(null, { status: 204 });
     }
     const [, logOf] = pathname.match(/^\/api\/clubs\/\d+\/tournaments\/(\d+)\/log$/) ?? [];
     if (method === "GET" && logOf) {

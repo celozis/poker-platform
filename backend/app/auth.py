@@ -52,6 +52,10 @@ Now = Annotated[datetime, Depends(get_now)]
 SessionToken = Annotated[str | None, Cookie(alias=SESSION_COOKIE)]
 
 
+# Why a phone was not taken, when normalize_phone cannot read it.
+PHONE_FORMAT = "Телефон: нужен российский номер из 11 цифр, например +7 913 555-12-34"
+
+
 def normalize_phone(raw: str) -> str | None:
     """Brings a Russian number typed as "8 913 ...", "+7 (913) ..." etc. to "+7XXXXXXXXXX"."""
     digits = re.sub(r"\D", "", raw)
@@ -134,19 +138,25 @@ def new_session_token() -> tuple[str, str]:
     return token, hash_secret(token)
 
 
+def _staff_member(session: Session, phone: str | None) -> Admin | None:
+    """The admin or owner with this phone, unless removed from their club's team."""
+    if phone is None:
+        return None
+    return session.scalar(select(Admin).where(Admin.phone == phone, Admin.removed_at.is_(None)))
+
+
 @router.post("/request-code", status_code=status.HTTP_204_NO_CONTENT)
 def request_code(body: CodeRequest, session: DbSession, now: Now) -> None:
-    phone = normalize_phone(body.phone)
-    if phone is None or session.scalar(select(Admin.id).where(Admin.phone == phone)) is None:
+    admin = _staff_member(session, normalize_phone(body.phone))
+    if admin is None:
         # Unknown numbers get the same answer, so the endpoint does not reveal who is an admin.
         return
-    send_login_code(session, "admin", phone, now)
+    send_login_code(session, "admin", admin.phone, now)
 
 
 @router.post("/verify-code", status_code=status.HTTP_204_NO_CONTENT)
 def verify_code(body: CodeVerification, response: Response, session: DbSession, now: Now) -> None:
-    phone = normalize_phone(body.phone)
-    admin = session.scalar(select(Admin).where(Admin.phone == phone)) if phone else None
+    admin = _staff_member(session, normalize_phone(body.phone))
     if admin is None or not take_login_code(session, "admin", admin.phone, body.code, now):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Неверный или просроченный код")
     token, token_hash = new_session_token()
@@ -159,7 +169,8 @@ def verify_code(body: CodeVerification, response: Response, session: DbSession, 
 
 def current_admin(session: DbSession, now: Now, token: SessionToken = None) -> Admin:
     stored = session.get(AdminSession, hash_secret(token)) if token else None
-    if stored is None or stored.expires_at <= now:
+    # A removed admin's sessions are deleted with the removal; checked here too all the same.
+    if stored is None or stored.expires_at <= now or stored.admin.removed_at is not None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Требуется вход")
     return stored.admin
 

@@ -27,6 +27,21 @@ class AdminOut(BaseModel):
     role: AdminRole
 
 
+class TeamMemberIn(BaseModel):
+    """An admin the owner takes on."""
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    name: str
+    phone: str
+
+
+class TeamMemberAdded(BaseModel):
+    admin: AdminOut
+    # added: new to the league; returned: removed from this club's team before, now back.
+    outcome: Literal["added", "returned"]
+
+
 class Me(BaseModel):
     admin: AdminOut
     club: ClubOut
@@ -519,6 +534,13 @@ LoggedAction = Literal[
     "payment_method_changed",
     "tournament_edited",
     "tournament_cancelled",
+    # The club's own log (no tournament): its team, and what the league changes of the club.
+    "admin_added",
+    "admin_returned",
+    "admin_removed",
+    "owner_appointed",
+    "owner_dismissed",
+    "club_renamed",
 ]
 
 
@@ -527,8 +549,9 @@ class ActionLogEntryOut(BaseModel):
 
     id: int
     created_at: Annotated[AwareDatetime, AfterValidator(_in_utc)]
-    # Who did it; None when the player did it themselves, in the bot.
+    # Who did it; None when the player did it themselves, in the bot, or the league did.
     admin: AdminOut | None
+    by_league: bool
     # The player it was done to, if any.
     player: PlayerOut | None
     action: LoggedAction

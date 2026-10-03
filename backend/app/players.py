@@ -9,7 +9,7 @@ from sqlalchemy import ColumnElement, or_, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
-from app.auth import DbSession, Now, normalize_phone
+from app.auth import PHONE_FORMAT, DbSession, Now, normalize_phone
 from app.clubs import AdminClub
 from app.models import ClubPlayer, Player
 from app.schemas import AddPlayerOutcome, PlayerAdded, PlayerIn, PlayerOut
@@ -28,7 +28,7 @@ def _player_errors(player: PlayerIn, phone: str | None) -> list[str]:
     if len(player.name) > MAX_NAME_LENGTH:
         errors.append(f"Имя длиннее {MAX_NAME_LENGTH} символов")
     if phone is None:
-        errors.append("Телефон: нужен российский номер из 11 цифр, например +7 913 555-12-34")
+        errors.append(PHONE_FORMAT)
     if not player.consent:
         errors.append("Без согласия на обработку персональных данных игрока завести нельзя")
     return errors

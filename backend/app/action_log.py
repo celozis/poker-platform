@@ -24,9 +24,11 @@ def record(
     *,
     player_id: int | None = None,
     details: str = "",
+    by_league: bool = False,
 ) -> None:
     """Logs the action done to the tournament, or to the club itself (its team, its settings):
-    by the admin, or by the player themselves (None). Called before the action's commit."""
+    by the admin, or by the player themselves (None), or by the league (None and `by_league`).
+    Called before the action's commit."""
     if isinstance(done_to, Tournament):
         club_id, tournament_id = done_to.club_id, done_to.id
     else:
@@ -36,12 +38,24 @@ def record(
             club_id=club_id,
             tournament_id=tournament_id,
             admin_id=None if admin is None else admin.id,
+            by_league=by_league,
             player_id=player_id,
             action=action,
             details=details,
             created_at=now,
         )
     )
+
+
+def member_details(member: Admin) -> str:
+    """The details of a change of the club's team: who joined or left it, "Анна Соколова,
+    +7 913 000-00-01"."""
+    return f"{member.name}, {_phone(member.phone)}"
+
+
+def _phone(phone: str) -> str:
+    """"+79130000001" as "+7 913 000-00-01"."""
+    return f"{phone[:2]} {phone[2:5]} {phone[5:8]}-{phone[8:10]}-{phone[10:]}"
 
 
 def paid(transaction: Transaction | None) -> str:

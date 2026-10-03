@@ -610,14 +610,23 @@ export type LoggedAction =
   | "storno"
   | "payment_method_changed"
   | "tournament_edited"
-  | "tournament_cancelled";
+  | "tournament_cancelled"
+  // The club's own log: its team, and what the league changes of the club.
+  | "admin_added"
+  | "admin_returned"
+  | "admin_removed"
+  | "owner_appointed"
+  | "owner_dismissed"
+  | "club_renamed";
 
-/** One thing done to the tournament. `admin` is null when the player did it themselves, in the
- * bot; `player` is null for what was done to the tournament as a whole. */
+/** One thing done to the tournament or the club. `admin` is null when the player did it
+ * themselves, in the bot, or the league did (`by_league`); `player` is null for what was done to
+ * the tournament as a whole, and in the club's log. */
 export type ActionLogEntry = {
   id: number;
   created_at: string;
   admin: Admin | null;
+  by_league: boolean;
   player: Player | null;
   action: LoggedAction;
   details: string;
@@ -683,6 +692,40 @@ export async function fetchReport(clubId: number, period: ReportPeriod): Promise
 /** Where the browser downloads the report as a CSV file for Excel. */
 export function reportCsvUrl(clubId: number, period: ReportPeriod): string {
   return `/api/clubs/${clubId}/reports.csv?${reportQuery(period)}`;
+}
+
+function teamUrl(clubId: number): string {
+  return `/api/clubs/${clubId}/team`;
+}
+
+/** The club's owners, then its admins, each in name order; only the owner sees it. */
+export async function fetchTeam(clubId: number): Promise<Admin[]> {
+  const response = await fetch(teamUrl(clubId));
+  if (!response.ok) throw failed(response);
+  return response.json();
+}
+
+/** added: new to the league; returned: removed from this club's team before, now back. */
+export type TeamMemberAdded = { admin: Admin; outcome: "added" | "returned" };
+
+/** Takes an admin on; a phone that will not do is rejected with the reason. */
+export async function addToTeam(
+  clubId: number,
+  member: { name: string; phone: string },
+): Promise<TeamMemberAdded> {
+  return accepted(await postJson(teamUrl(clubId), member));
+}
+
+/** The club's own log, the latest first: its team changes; only the owner sees it. */
+export async function fetchClubLog(clubId: number): Promise<ActionLogEntry[]> {
+  const response = await fetch(`/api/clubs/${clubId}/log`);
+  if (!response.ok) throw failed(response);
+  return response.json();
+}
+
+/** Removes an admin from the team: their access ends at once. An owner cannot be removed. */
+export async function removeFromTeam(clubId: number, adminId: number): Promise<void> {
+  await throwIfRejected(await sendJson("DELETE", `${teamUrl(clubId)}/${adminId}`));
 }
 
 /** The player's profile. `telegram_linked`: a Telegram account is linked to them in the bot. */

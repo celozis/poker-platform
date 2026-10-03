@@ -4,17 +4,20 @@ import LeagueBrand from "./LeagueBrand";
 import PlayersPage from "./PlayersPage";
 import RatingPage from "./RatingPage";
 import ReportsPage from "./ReportsPage";
+import TeamPage from "./TeamPage";
 import TournamentsPage from "./TournamentsPage";
 
-const SECTIONS = ["Турниры", "Игроки", "Рейтинг", "Отчёты"] as const;
+const SECTIONS = ["Турниры", "Игроки", "Рейтинг", "Отчёты", "Команда"] as const;
 type Section = (typeof SECTIONS)[number];
+/** What only the club's owner sees. */
+const OWNERS_SECTIONS: readonly Section[] = ["Отчёты", "Команда"];
 
 /** The club admin's workspace, dressed in the club's own logo and colours. The club's owner
- * works in it too, and alone sees the club's reports. */
+ * works in it too, and alone sees the club's reports and its team. */
 export default function AdminPanel({ me, onLogout }: { me: Me; onLogout: () => void }) {
   const { admin, club } = me;
   const [section, setSection] = useState<Section>("Турниры");
-  const sections = SECTIONS.filter((name) => name !== "Отчёты" || admin.role === "owner");
+  const sections = SECTIONS.filter((name) => admin.role === "owner" || !OWNERS_SECTIONS.includes(name));
 
   return (
     <>
@@ -64,6 +67,7 @@ export default function AdminPanel({ me, onLogout }: { me: Me; onLogout: () => v
         {section === "Игроки" && <PlayersPage club={club} />}
         {section === "Рейтинг" && <RatingPage club={club} />}
         {section === "Отчёты" && <ReportsPage club={club} />}
+        {section === "Команда" && <TeamPage club={club} />}
         <LeagueBrand className="mt-8 justify-center text-slate-500" />
       </main>
     </>

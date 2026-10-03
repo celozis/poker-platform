@@ -5,10 +5,16 @@ be started, coming ones with players signed up and come, and cancelled ones.
 
     docker compose exec backend python -m app.demo
 
-It first deletes every tournament (with its registrations and cashier) and every player who is
-not linked to a Telegram account, so it can be run again for a fresh set. Clubs, admins and
-Telegram-linked players stay; a linked player plays in the demo tournaments of «Енисей», so the
-bot sends them a result and a reminder.
+It first deletes every tournament (with its registrations and cashier), every player who is
+not linked to a Telegram account, the clubs' own logs and the staff it takes on itself, so it can
+be run again for a fresh set. Clubs, the seed's admins and owners and Telegram-linked players
+stay; a linked player plays in the demo tournaments of «Енисей», so the bot sends them a result
+and a reminder.
+
+The league's part is done as the developer does it (app/league.py): «Томь» is founded and its
+owner appointed by the league's functions. The other staff are taken on by their clubs' owners
+in «Команда», and one admin of «Обь», who worked in its tournaments for months, was removed ten
+days ago: his name stays in the cashier and the logs.
 
 Everything goes through the API, as admins would do it, with the clock set back in time: seating,
 places, points, the cashier, the action log and the blind clocks are what the system itself
@@ -21,12 +27,13 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, time, timedelta
 from functools import partial
-from typing import Any
+from typing import Any, NamedTuple
 
 from fastapi.testclient import TestClient
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
+from app import league
 from app.auth import get_clock, new_session_token
 from app.bot import conversation
 from app.db import SessionLocal
@@ -47,15 +54,29 @@ from app.seasons import LEAGUE_TIME, season_at
 from app.seed import seed
 
 OB, ENISEY, TOM = "Покер-клуб «Обь»", "Покер-клуб «Енисей»", "Покер-клуб «Томь»"
-TOM_CLUB = {"logo_url": "/logos/tom.svg", "primary_color": "#1F5C4A", "accent_color": "#D9B44A"}
+TOM_COLORS = ("#1F5C4A", "#D9B44A")
+# Until the owner can upload it in the club's settings, the demo puts it in place itself.
+TOM_LOGO = "/logos/tom.svg"
 
-# (club, name, phone, role); the seed's admin and owner of «Обь» and «Енисей» are there already.
+
+class StaffMember(NamedTuple):
+    club: str
+    name: str
+    phone: str
+
+
+# The owner the league appoints to «Томь».
+TOM_OWNER = StaffMember(TOM, "Наталья Широкова", "+79990000013")
+# The admins the owners take on in «Команда»; the seed's admin and owner of «Обь» and «Енисей»
+# are there already.
 STAFF = [
-    (OB, "Сергей Лебедев", "+79990000021", "admin"),
-    (ENISEY, "Ольга Кравец", "+79990000022", "admin"),
-    (TOM, "Павел Громов", "+79990000003", "admin"),
-    (TOM, "Наталья Широкова", "+79990000013", "owner"),
+    StaffMember(OB, "Сергей Лебедев", "+79990000021"),
+    StaffMember(ENISEY, "Ольга Кравец", "+79990000022"),
+    StaffMember(TOM, "Павел Громов", "+79990000003"),
 ]
+# An admin of «Обь» who worked in its tournaments and was removed from the team ten days ago.
+LEFT = StaffMember(OB, "Виталий Осипов", "+79990000031")
+LEFT_DAYS_AGO = 10
 
 NAMES = [
     "Алексей Смирнов", "Мария Кузнецова", "Иван Попов", "Екатерина Васильева", "Дмитрий Новиков",
@@ -158,6 +179,8 @@ class Demo:
         self.tokens: dict[str, str] = {}
         # Club → phones of its staff: the admins in the order they were added, the owner last.
         self.staff: dict[str, list[str]] = {}
+        # Phone → when they were removed from the team: they do nothing after that.
+        self.removed: dict[str, datetime] = {}
         self.club_ids: dict[str, int] = {}
         # Demo number → player id.
         self.player_ids: dict[int, int] = {}
@@ -176,7 +199,11 @@ class Demo:
 
     def someone_of(self, club: str) -> None:
         """Mostly the club's first admin, now and then another admin or the owner."""
-        phones = self.staff[club]
+        phones = [
+            phone
+            for phone in self.staff[club]
+            if phone not in self.removed or self.clock.now < self.removed[phone]
+        ]
         weights = [6] + [3] * (len(phones) - 2) + [1]
         self.act_as(self.rng.choices(phones, weights=weights)[0])
 
@@ -190,25 +217,42 @@ class Demo:
     # --- people -----------------------------------------------------------------------------
 
     def staff_and_clubs(self, session: Session) -> None:
-        tom = session.scalar(select(Club).where(Club.name == TOM)) or Club(name=TOM)
-        for key, value in TOM_CLUB.items():
-            setattr(tom, key, value)
-        session.add(tom)
-        session.flush()
-        for club_name, name, phone, role in STAFF:
-            club = session.scalar(select(Club).where(Club.name == club_name))
-            assert club is not None
-            admin = session.scalar(select(Admin).where(Admin.phone == phone)) or Admin(phone=phone)
-            admin.name, admin.role, admin.club_id = name, role, club.id
-            session.add(admin)
-        session.flush()
+        """«Томь» and its owner by the league's command, more than half a year ago; then the
+        owners take their admins on in «Команда»."""
+        self.at(self.real_now - timedelta(days=215))
+        tom = session.scalar(select(Club).where(Club.name == TOM))
+        if tom is None:
+            tom = league.found_club(session, TOM, *TOM_COLORS)
+        tom.logo_url = TOM_LOGO
+        league.appoint_owner(session, tom, TOM_OWNER.name, TOM_OWNER.phone, self.clock.now)
+        session.commit()
+        self.log_everyone_in(session)
+
+        self.at(self.real_now - timedelta(days=210))
+        for member in [*STAFF, LEFT]:
+            self.act_as(self.staff[member.club][-1])
+            self.call(
+                "POST",
+                f"/api/clubs/{self.club_ids[member.club]}/team",
+                {"name": member.name, "phone": member.phone},
+            )
+        self.log_everyone_in(session)
+        self.removed[LEFT.phone] = self.real_now - timedelta(days=LEFT_DAYS_AGO)
+
+    def log_everyone_in(self, session: Session) -> None:
+        """A session for each of the clubs' staff, the admins in the order they were taken on and
+        the owners last."""
         for club in session.scalars(select(Club)).all():
             self.club_ids[club.name] = club.id
             admins = session.scalars(
-                select(Admin).where(Admin.club_id == club.id).order_by(Admin.role, Admin.id)
+                select(Admin)
+                .where(Admin.club_id == club.id, Admin.removed_at.is_(None))
+                .order_by(Admin.role, Admin.id)
             ).all()
             self.staff[club.name] = [a.phone for a in admins]
             for admin in admins:
+                if admin.phone in self.tokens:
+                    continue
                 token, token_hash = new_session_token()
                 session.add(
                     AdminSession(
@@ -219,6 +263,14 @@ class Demo:
                 )
                 self.tokens[admin.phone] = token
         session.commit()
+
+    def let_go(self) -> None:
+        """The owner of «Обь» removes the admin who left, on the day he left."""
+        team_url = f"/api/clubs/{self.club_ids[LEFT.club]}/team"
+        self.at(self.removed[LEFT.phone])
+        self.act_as(self.staff[LEFT.club][-1])
+        member = next(m for m in self.call("GET", team_url) if m["phone"] == LEFT.phone)
+        self.call("DELETE", f"{team_url}/{member['id']}")
 
     def players(self) -> None:
         """Every demo player came to their first club months ago, before the season before, and
@@ -496,19 +548,19 @@ def level_starts(structure: list[dict[str, Any]]) -> dict[int, float]:
 
 
 def reset(session: Session) -> None:
-    """Deletes every tournament and every player not linked to a Telegram account."""
+    """Deletes every tournament, every player not linked to a Telegram account, the clubs' own
+    logs and the staff the demo takes on (the seed's stay)."""
     linked = select(TelegramUser.player_id).where(TelegramUser.player_id.is_not(None))
     unlinked = select(Player.id).where(Player.id.not_in(linked))
-    session.execute(
-        delete(ActionLogEntry).where(
-            ActionLogEntry.tournament_id.is_not(None) | ActionLogEntry.player_id.in_(unlinked)
-        )
-    )
+    # The tournaments' logs and the clubs' own.
+    session.execute(delete(ActionLogEntry))
     session.execute(delete(Transaction))
     session.execute(delete(Registration))
     session.execute(delete(Tournament))
     session.execute(delete(ClubPlayer).where(ClubPlayer.player_id.in_(unlinked)))
     session.execute(delete(Player).where(Player.id.in_(unlinked)))
+    demo_staff = [member.phone for member in [*STAFF, LEFT, TOM_OWNER]]
+    session.execute(delete(Admin).where(Admin.phone.in_(demo_staff)))
     session.commit()
 
 
@@ -644,6 +696,7 @@ def main() -> None:
             for spec in specs(demo.real_now, misha):
                 demo.tournament(spec)
                 print(f"{spec.club}: {spec.name} — {spec.outcome}")
+            demo.let_go()
             report(demo)
     finally:
         del app.dependency_overrides[get_clock]
@@ -655,7 +708,8 @@ def report(demo: Demo) -> None:
     with SessionLocal() as session:
         for admin in session.scalars(select(Admin).order_by(Admin.club_id, Admin.role, Admin.id)):
             role = "владелец" if admin.role == "owner" else "администратор"
-            print(f"  {admin.club.name}: {role} {admin.name}, {admin.phone}")
+            removed = ", убран из команды: не входит" if admin.removed_at else ""
+            print(f"  {admin.club.name}: {role} {admin.name}, {admin.phone}{removed}")
         live = set(
             session.scalars(
                 select(Tournament.board_token).where(Tournament.status.in_(("running", "paused")))
