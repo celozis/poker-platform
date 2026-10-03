@@ -140,6 +140,13 @@ class Spec:
     cashier_fixes: bool = False
     # A finished tournament's place corrected: (the place it was, the place it becomes).
     correct_place: tuple[int, int] | None = None
+    # The admin closes registration to players of a coming tournament: the hall is full.
+    close_registration: bool = False
+    # The admin puts the clock of a game going on right: the level restarted and a minute added
+    # while it runs, a minute taken off on the pause.
+    clock_fixes: bool = False
+    # The admin closes the late registration of a game going on early, if it is still open.
+    close_late_registration: bool = False
 
 
 class Demo:
@@ -278,6 +285,10 @@ class Demo:
             self.at(created + timedelta(hours=4))
             self.act_as(self.staff[spec.club][-1])
             self.call("PUT", url, {**tournament, "buy_in": spec.new_buy_in})
+        if spec.close_registration:
+            self.at(created + timedelta(hours=5))
+            self.someone_of(spec.club)
+            self.call("POST", f"{url}/registrations/close")
 
         if spec.outcome == "scheduled":
             moment = max(spec.starts - timedelta(hours=11), self.real_now - timedelta(minutes=40))
@@ -398,9 +409,24 @@ class Demo:
                     {"table": move["to_table"], "seat": move["to_seat"]},
                 )
 
+        # Put right a minute or so after the last knock-out, so no window the demo used moves.
+        if spec.close_late_registration and self.game(url)["can_close_late_registration"]:
+            self.at(end + timedelta(seconds=10))
+            self.someone_of(spec.club)
+            self.call("POST", f"{url}/close-late-registration")
+        if spec.clock_fixes and spec.outcome == "running":
+            self.at(end + timedelta(seconds=20))
+            self.someone_of(spec.club)
+            self.call("POST", f"{url}/restart-level")
+            self.at(end + timedelta(seconds=30))
+            self.call("POST", f"{url}/add-minute")
         if spec.outcome == "paused":
-            self.at(self.real_now - timedelta(minutes=rng.randint(3, 8)))
+            paused = self.real_now - timedelta(minutes=rng.randint(3, 8))
+            self.at(paused)
             self.call("POST", f"{url}/pause")
+            if spec.clock_fixes:
+                self.at(paused + timedelta(minutes=1))
+                self.call("POST", f"{url}/take-minute")
         if spec.outcome == "finished":
             self.after_the_end(spec, url, end)
 
@@ -535,16 +561,18 @@ def specs(now: datetime, misha: list[int]) -> list[Spec]:
         Spec(ob, "Турбо-серия", ago(55), "running", template="turbo", buy_in=1500, seats=5,
              reentry=4, addon=3, addon_stack=20000, addon_price=1000, late=6,
              players=list(range(0, 13)), no_shows=[15], late_players=[13, 14], reentries=2,
-             left=9, undo_knock_out=True, bot_sign_ups=4, bot_drop_out=True),
+             left=9, undo_knock_out=True, bot_sign_ups=4, bot_drop_out=True,
+             clock_fixes=True),
         Spec(ob, "Хайроллер", ago(130), "paused", buy_in=5000, stack=30000,
              reentry=2, addon=2, addon_stack=30000, addon_price=3000, late=3,
-             players=list(range(16, 26)), reentries=1, addon_share=0.8, left=6),
+             players=list(range(16, 26)), reentries=1, addon_share=0.8, left=6,
+             clock_fixes=True),
         Spec(ob, "Экспресс-турнир", ago(25), "waiting", template="turbo", buy_in=1000,
              seats=6, reentry=2, addon=None, late=3, players=list(range(26, 33))),
         Spec(ob, "Кубок новичков", ahead(200), "scheduled", players=list(range(14, 26)),
              bot_sign_ups=5, bot_drop_out=True),
         Spec(ob, "Турнир четверга", day(2, 19), "scheduled", players=list(range(0, 11)),
-             new_buy_in=2500),
+             new_buy_in=2500, close_registration=True),
         Spec(ob, "Большой субботний турнир", day(5, 16), "scheduled", buy_in=3500,
              stack=30000, seats=10, reentry=4, addon=4, addon_stack=50000, addon_price=2000,
              late=5, players=[0, 2, 4, 6, 8]),
@@ -569,7 +597,8 @@ def specs(now: datetime, misha: list[int]) -> list[Spec]:
              players=list(range(32, 46)) + misha, reentries=2, play_minutes=240),
         Spec(en, "Енисей-турбо", ago(40), "running", template="turbo", buy_in=1500,
              seats=7, reentry=3, addon=3, addon_stack=20000, addon_price=1000, late=5,
-             players=list(range(34, 47)), late_players=[47], reentries=1, left=10),
+             players=list(range(34, 47)), late_players=[47], reentries=1, left=10,
+             close_late_registration=True),
         Spec(en, "Кубок Енисея. Этап 3", ahead(110), "scheduled", buy_in=2500,
              reentry=3, addon=3, addon_stack=40000, addon_price=1500, late=4,
              players=[48, 49] + list(range(30, 40)) + misha, come=2),

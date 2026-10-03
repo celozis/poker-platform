@@ -67,6 +67,33 @@ describe("tournament action log", () => {
     ]);
   });
 
+  it("names the clock adjustments and the closing of registration", async () => {
+    await openLog({
+      actionLogs: {
+        5: [
+          entry(7, "late_registration_opened", null, ME.admin, "Уровень 2, осталось 12:00"),
+          entry(6, "late_registration_closed", null, ME.admin, "Уровень 2, осталось 12:30"),
+          entry(5, "minute_taken", null, ME.admin, "Уровень 2: 14:00 → 13:00"),
+          entry(4, "minute_added", null, ME.admin, "Уровень 2: 13:00 → 14:00"),
+          entry(3, "level_restarted", null, ME.admin, "Уровень 2: 4:00 → 20:00"),
+          entry(2, "registration_opened", null, ME.admin),
+          entry(1, "registration_closed", null, ME.admin),
+        ],
+      },
+    });
+
+    await screen.findByRole("list", { name: "Журнал действий" });
+    expect(shownEntries()).toEqual([
+      expect.stringMatching(/Поздняя регистрация открыта.*Уровень 2, осталось 12:00/),
+      expect.stringMatching(/Поздняя регистрация закрыта досрочно.*Уровень 2, осталось 12:30/),
+      expect.stringMatching(/−1 минута.*Уровень 2: 14:00 → 13:00/),
+      expect.stringMatching(/\+1 минута.*Уровень 2: 13:00 → 14:00/),
+      expect.stringMatching(/Уровень сначала.*Уровень 2: 4:00 → 20:00/),
+      expect.stringMatching(/Запись открыта/),
+      expect.stringMatching(/Запись закрыта/),
+    ]);
+  });
+
   it("filters the log by player to trace one player's evening", async () => {
     const { user, fetch } = await openLog();
     const filter = await screen.findByRole("combobox", { name: "Игрок" });

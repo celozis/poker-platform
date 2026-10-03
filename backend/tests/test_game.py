@@ -139,12 +139,76 @@ def test_admin_switches_the_level_forward_and_back(
     assert back["clock"] == {"running": True, "item": 2, "seconds_left": 10 * 60}
 
 
+def test_admin_restarts_the_level_from_its_full_time_running_or_paused(
+    client: TestClient, club: Club, clock: FakeClock
+) -> None:
+    url, _ = ready_tournament(client, club, arrived=2)
+    client.post(f"{url}/start")
+    clock.advance(timedelta(minutes=27))
+
+    restarted = client.post(f"{url}/restart-level").json()
+    clock.advance(timedelta(minutes=3))
+    client.post(f"{url}/pause")
+    paused_restart = client.post(f"{url}/restart-level").json()
+
+    assert restarted["clock"] == {"running": True, "item": 1, "seconds_left": 20 * 60}
+    assert (paused_restart["status"], paused_restart["clock"]) == (
+        "paused",
+        {"running": False, "item": 1, "seconds_left": 20 * 60},
+    )
+
+
+def test_admin_adds_and_takes_a_minute_running_or_paused_but_not_below_zero(
+    client: TestClient, club: Club, clock: FakeClock
+) -> None:
+    url, _ = ready_tournament(client, club, arrived=2)
+    client.post(f"{url}/start")
+    clock.advance(timedelta(minutes=5))
+
+    added = client.post(f"{url}/add-minute").json()
+    taken = client.post(f"{url}/take-minute").json()
+    client.post(f"{url}/pause")
+    added_on_pause = client.post(f"{url}/add-minute").json()
+    clock.advance(timedelta(minutes=10))
+    for _ in range(17):
+        client.post(f"{url}/take-minute")
+
+    assert added["clock"] == {"running": True, "item": 0, "seconds_left": 16 * 60}
+    assert taken["clock"]["seconds_left"] == 15 * 60
+    assert added_on_pause["clock"] == {"running": False, "item": 0, "seconds_left": 16 * 60}
+    assert clock_of(client, url) == {"running": False, "item": 0, "seconds_left": 0}
+
+
 def test_the_clock_cannot_be_touched_before_the_start(client: TestClient, club: Club) -> None:
     url, _ = ready_tournament(client, club, arrived=2)
 
-    for action in ("pause", "resume", "next-level", "previous-level"):
+    for action in (
+        "pause",
+        "resume",
+        "next-level",
+        "previous-level",
+        "restart-level",
+        "add-minute",
+        "take-minute",
+    ):
         response = client.post(f"{url}/{action}")
         assert (response.status_code, response.json()["detail"]) == (409, "Турнир ещё не начался")
+
+
+def test_the_game_sums_up_players_in_the_game_registered_entries_and_no_shows(
+    client: TestClient, club: Club
+) -> None:
+    url, (first, second, *_) = ready_tournament(client, club, arrived=4, not_arrived=2)
+    before = client.get(f"{url}/game").json()
+    client.post(f"{url}/start")
+
+    client.post(f"{url}/players/{first['id']}/knock-out")
+    client.post(f"{url}/players/{first['id']}/reentry", json=CASH)
+    client.post(f"{url}/players/{second['id']}/knock-out")
+    game = client.get(f"{url}/game").json()
+
+    assert before["summary"] == {"in_game": 0, "registered": 6, "entries": 0, "no_shows": 2}
+    assert game["summary"] == {"in_game": 3, "registered": 6, "entries": 5, "no_shows": 2}
 
 
 def places(game: dict[str, Any]) -> list[tuple[str, int]]:
@@ -447,6 +511,89 @@ def test_late_seating_is_refused_once_late_registration_closes(
     assert (too_late.status_code, too_late.json()["detail"]) == (
         409,
         "Поздняя регистрация закрыта: она шла до уровня 1",
+    )
+
+
+def test_admin_closes_late_registration_early_for_everyone_and_opens_it_again(
+    client: TestClient, club: Club
+) -> None:
+    url, players = ready_tournament(client, club, arrived=2, not_arrived=2)
+    started = client.post(f"{url}/start").json()
+
+    closed = client.post(f"{url}/close-late-registration").json()
+    late_seat = client.post(f"{url}/players/{players[2]['id']}/seat", json=CASH)
+    newcomer = client.post(
+        f"/api/clubs/{club.id}/players",
+        json={"name": "Новичок", "phone": "+79139999999", "consent": True},
+    ).json()["player"]
+    late_sign_up = client.post(f"{url}/registrations", json={"player_id": newcomer["id"]})
+    opened = client.post(f"{url}/open-late-registration").json()
+    seated_after = client.post(f"{url}/players/{players[3]['id']}/seat", json=CASH)
+
+    assert (started["can_close_late_registration"], started["can_open_late_registration"]) == (
+        True,
+        False,
+    )
+    assert closed["windows"]["late_registration"] is False
+    assert (closed["can_close_late_registration"], closed["can_open_late_registration"]) == (
+        False,
+        True,
+    )
+    for refused in (late_seat, late_sign_up):
+        assert (refused.status_code, refused.json()["detail"]) == (
+            409,
+            "Поздняя регистрация закрыта досрочно",
+        )
+    assert opened["windows"]["late_registration"] is True
+    assert seated_after.status_code == 200
+
+
+def test_late_registration_reopens_only_until_the_level_the_rules_give(
+    client: TestClient, club: Club, clock: FakeClock
+) -> None:
+    url, _ = ready_tournament(client, club, arrived=2, late_registration_until_level=1)
+    client.post(f"{url}/start")
+    not_closed = client.post(f"{url}/open-late-registration")
+    client.post(f"{url}/close-late-registration")
+    closed_again = client.post(f"{url}/close-late-registration")
+
+    clock.advance(timedelta(minutes=20))
+    too_late = client.post(f"{url}/open-late-registration")
+    game = client.get(f"{url}/game").json()
+
+    assert (not_closed.status_code, not_closed.json()["detail"]) == (
+        409,
+        "Поздняя регистрация не закрыта",
+    )
+    assert (closed_again.status_code, closed_again.json()["detail"]) == (
+        409,
+        "Поздняя регистрация уже закрыта",
+    )
+    assert (too_late.status_code, too_late.json()["detail"]) == (
+        409,
+        "Поздняя регистрация шла до уровня 1, открыть её снова нельзя",
+    )
+    assert (game["can_close_late_registration"], game["can_open_late_registration"]) == (
+        False,
+        False,
+    )
+
+
+def test_late_registration_cannot_be_closed_where_there_is_none_or_before_the_start(
+    client: TestClient, club: Club
+) -> None:
+    url, _ = ready_tournament(client, club, arrived=2, late_registration_until_level=None)
+    before_start = client.post(f"{url}/close-late-registration")
+    client.post(f"{url}/start")
+    without = client.post(f"{url}/close-late-registration")
+
+    assert (before_start.status_code, before_start.json()["detail"]) == (
+        409,
+        "Турнир ещё не начался",
+    )
+    assert (without.status_code, without.json()["detail"]) == (
+        409,
+        "В этом турнире нет поздней регистрации",
     )
 
 

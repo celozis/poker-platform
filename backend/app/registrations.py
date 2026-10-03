@@ -15,7 +15,7 @@ from app import action_log, realtime
 from app.auth import CurrentAdmin, DbSession, Now
 from app.clubs import AdminClub
 from app.game import late_registration_closed_because
-from app.models import Club, ClubPlayer, Player, Registration, Tournament
+from app.models import Admin, Club, ClubPlayer, Player, Registration, Tournament
 from app.schemas import (
     CheckInUndone,
     PaymentIn,
@@ -45,6 +45,21 @@ def registration_closed_because(tournament: Tournament, now: datetime) -> str | 
     if tournament.is_live:
         return late_registration_closed_because(tournament, now)
     return None
+
+
+def closed_to_players_before_start(tournament: Tournament) -> bool:
+    """Whether the admin has closed registration to players and the tournament is still to start:
+    once it starts, its late registration decides who sits down."""
+    return tournament.status == "scheduled" and tournament.registration_closed_to_players
+
+
+def player_registration_closed_because(tournament: Tournament, now: datetime) -> str | None:
+    """Why a player cannot sign up themselves (in the bot), if they cannot: the admin's rules,
+    and the registration the admin may have closed to players before the start."""
+    closed = registration_closed_because(tournament, now)
+    if closed is None and closed_to_players_before_start(tournament):
+        return f"Запись на турнир «{tournament.name}» закрыта."
+    return closed
 
 
 def dropping_out_closed_because(tournament: Tournament) -> str | None:
@@ -88,11 +103,9 @@ def find_registration(
     )
 
 
-@router.get("")
-def list_registrations(
-    tournament_id: int, club: AdminClub, session: DbSession, now: Now
+def _tournament_registrations(
+    session: DbSession, tournament: Tournament, now: datetime
 ) -> TournamentRegistrations:
-    tournament = club_tournament(session, club, tournament_id)
     registrations = session.scalars(
         select(Registration)
         .join(Registration.player)
@@ -104,8 +117,64 @@ def list_registrations(
         registration_open=registration_closed_because(tournament, now) is None,
         drop_out_open=dropping_out_closed_because(tournament) is None,
         check_in_open=_check_in_closed_because(tournament, now) is None,
-        registrations=[RegistrationOut.model_validate(r) for r in registrations]
+        registration_closed_to_players=tournament.registration_closed_to_players,
+        can_close_registration=_closing_refused_because(tournament) is None
+        and not tournament.registration_closed_to_players,
+        can_open_registration=_closing_refused_because(tournament) is None
+        and tournament.registration_closed_to_players,
+        registrations=[RegistrationOut.model_validate(r) for r in registrations],
     )
+
+
+@router.get("")
+def list_registrations(
+    tournament_id: int, club: AdminClub, session: DbSession, now: Now
+) -> TournamentRegistrations:
+    return _tournament_registrations(session, club_tournament(session, club, tournament_id), now)
+
+
+def _closing_refused_because(tournament: Tournament) -> str | None:
+    """Registration is closed to players and opened again only before the start; afterwards the
+    late registration is what is closed."""
+    if tournament.status == "cancelled":
+        return "Турнир отменён"
+    if tournament.has_started:
+        return "Турнир уже начался: закрыть можно позднюю регистрацию"
+    return None
+
+
+def _close_or_open(
+    tournament_id: int, club: Club, admin: Admin, session: DbSession, now: datetime, close: bool
+) -> TournamentRegistrations:
+    tournament = club_tournament(session, club, tournament_id, for_update=True)
+    refused = _closing_refused_because(tournament)
+    if refused is None and tournament.registration_closed_to_players == close:
+        refused = "Запись уже закрыта" if close else "Запись не закрыта"
+    if refused:
+        raise HTTPException(status.HTTP_409_CONFLICT, refused)
+    tournament.registration_closed_to_players = close
+    action_log.record(
+        session, tournament, admin, "registration_closed" if close else "registration_opened", now
+    )
+    realtime.tournament_changed(session, tournament.id)
+    session.commit()
+    return _tournament_registrations(session, tournament, now)
+
+
+@router.post("/close")
+def close_registration(
+    tournament_id: int, club: AdminClub, admin: CurrentAdmin, session: DbSession, now: Now
+) -> TournamentRegistrations:
+    """Closes registration to players before the start, when the hall is full: the bot no longer
+    signs them up, but the admin still registers them."""
+    return _close_or_open(tournament_id, club, admin, session, now, close=True)
+
+
+@router.post("/open")
+def open_registration(
+    tournament_id: int, club: AdminClub, admin: CurrentAdmin, session: DbSession, now: Now
+) -> TournamentRegistrations:
+    return _close_or_open(tournament_id, club, admin, session, now, close=False)
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)

@@ -132,6 +132,29 @@ def test_the_board_hears_of_a_pause_in_under_a_second(
     assert delay < 1
 
 
+def test_the_board_shows_a_restarted_level_and_a_minute_more_or_less_in_under_a_second(
+    client: TestClient, club: Club, hall: TestClient, clock: FakeClock
+) -> None:
+    url, board_url = started(client, club, arrived=2)
+    clock.advance(timedelta(minutes=5))
+
+    with hall.websocket_connect(f"{board_url}/ws") as board:
+        receive_within(board)
+        sent_at = time.monotonic()
+        client.post(f"{url}/add-minute")
+        added = receive_within(board)
+        delay = time.monotonic() - sent_at
+        client.post(f"{url}/take-minute")
+        taken = receive_within(board)
+        client.post(f"{url}/restart-level")
+        restarted = receive_within(board)
+
+    assert added["clock"]["seconds_left"] == 16 * 60
+    assert taken["clock"]["seconds_left"] == 15 * 60
+    assert restarted["clock"]["seconds_left"] == 20 * 60
+    assert delay < 1
+
+
 def test_the_board_hears_of_the_start_a_level_change_and_a_knock_out(
     client: TestClient, club: Club, hall: TestClient
 ) -> None:

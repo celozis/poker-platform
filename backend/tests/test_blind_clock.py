@@ -86,3 +86,46 @@ def test_there_is_nothing_before_the_first_level_or_after_the_last() -> None:
     assert clock.can_move(1, START)
     last = clock.moved(1, START).moved(1, START).moved(1, START)
     assert not last.can_move(1, START)
+
+
+def test_restarting_the_level_gives_it_its_full_time_again_whether_running_or_paused() -> None:
+    running = BlindClock.started(DURATIONS, START)
+    at = START + minutes(27)
+
+    restarted = running.restarted(at)
+    assert (restarted.item, restarted.running, restarted.time_left(at)) == (1, True, minutes(20))
+    assert restarted.at(at + minutes(21)).item == 2
+
+    paused = running.paused(START + minutes(45)).restarted(START + minutes(99))
+    assert (paused.item, paused.running, paused.time_left(START + minutes(120))) == (
+        2,
+        False,
+        minutes(10),
+    )
+
+
+def test_shifting_the_time_adds_or_takes_a_minute_whether_running_or_paused() -> None:
+    running = BlindClock.started(DURATIONS, START)
+    at = START + minutes(5)
+
+    added = running.shifted(minutes(1), at)
+    assert (added.item, added.running, added.time_left(at)) == (0, True, minutes(16))
+    assert added.at(START + minutes(20.5)).item == 0
+    taken = running.shifted(minutes(-1), at)
+    assert taken.time_left(at) == minutes(14)
+
+    paused = running.paused(at).shifted(minutes(1), START + minutes(30))
+    assert (paused.running, paused.time_left(START + minutes(99))) == (False, minutes(16))
+
+
+def test_taking_a_minute_never_leaves_less_than_no_time() -> None:
+    # Half a minute left: a running level ends at once and the next one starts.
+    at = START + minutes(19) + timedelta(seconds=30)
+    running = BlindClock.started(DURATIONS, START).shifted(minutes(-1), at)
+    assert (running.at(at).item, running.time_left(at)) == (1, minutes(20))
+
+    paused = BlindClock.started(DURATIONS, START).paused(at).shifted(minutes(-1), at)
+    assert (paused.item, paused.time_left(at)) == (0, timedelta(0))
+
+    last = BlindClock.started(DURATIONS, START).at(START + minutes(500))
+    assert last.shifted(minutes(1), START + minutes(500)).time_left(START + minutes(500)) == minutes(1)

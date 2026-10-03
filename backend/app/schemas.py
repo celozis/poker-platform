@@ -158,6 +158,13 @@ class TournamentRegistrations(BaseModel):
     drop_out_open: bool
     # Whether arrivals can be checked in: from 12 hours before the start to 12 hours after it.
     check_in_open: bool
+    # Whether the admin has closed registration to players before the start: the bot no longer
+    # signs them up, the admin still does.
+    registration_closed_to_players: bool
+    # Whether the admin can close registration to players now, or open it again: only before
+    # the start.
+    can_close_registration: bool
+    can_open_registration: bool
     registrations: list[RegistrationOut]
 
 
@@ -203,6 +210,17 @@ class MoveOut(BaseModel):
     to_seat: int
 
 
+class GameSummary(BaseModel):
+    """The tournament at a glance, counted in players except for the entries."""
+
+    in_game: int
+    registered: int
+    # First entries and re-entries.
+    entries: int
+    # Registered but not come (not checked in).
+    no_shows: int
+
+
 class GameState(BaseModel):
     """A tournament's game as the admin runs it."""
 
@@ -219,6 +237,11 @@ class GameState(BaseModel):
     waiting: list[RegistrationOut]
     # A move that keeps tables even, when they are not.
     suggested_move: MoveOut | None
+    summary: GameSummary
+    # Whether the admin can close late registration early now (it is open), or open again what
+    # they closed early (the level the rules give has not passed).
+    can_close_late_registration: bool
+    can_open_late_registration: bool
 
 
 class MoveIn(BaseModel):
@@ -477,6 +500,13 @@ LoggedAction = Literal[
     "paused",
     "resumed",
     "level_changed",
+    "level_restarted",
+    "minute_added",
+    "minute_taken",
+    "registration_closed",
+    "registration_opened",
+    "late_registration_closed",
+    "late_registration_opened",
     "knocked_out",
     "knock_out_undone",
     "reentry",

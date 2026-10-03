@@ -28,9 +28,10 @@ from app.auth import normalize_phone
 from app.models import Club, Registration, TelegramUser, Tournament
 from app.players import add_to_club_list, league_player
 from app.registrations import (
+    closed_to_players_before_start,
     dropping_out_closed_because,
     find_registration,
-    registration_closed_because,
+    player_registration_closed_because,
 )
 from app.rating import club_standings
 from app.schedule import club_schedule
@@ -258,6 +259,9 @@ def _schedule(session: Session, user: TelegramUser, club: Club, now: datetime) -
         if t.is_live:
             line += f" — идёт, поздняя регистрация до уровня {t.late_registration_until_level}"
         label = f"{_short_date(t.starts_at)} {t.name}"
+        if t.id not in came and closed_to_players_before_start(t):
+            lines.append(f"{line} — запись закрыта")
+            continue
         if t.id not in came:
             lines.append(line)
             buttons.append(
@@ -313,13 +317,14 @@ def sign_up(
     session: Session, user: TelegramUser, tournament_id: int, now: datetime
 ) -> ScheduleChange:
     """Registers the player for a tournament of their club, by the rules the admin panel keeps:
-    until the start, or afterwards while late registration is open, and once."""
+    until the start, or afterwards while late registration is open, and once; but not once the
+    admin has closed registration to players."""
     if user.player is None or user.club is None:
         return ScheduleChange(current_step(session, user))
     tournament = session.get(Tournament, tournament_id, with_for_update=True)
     if tournament is None or tournament.club_id != user.club.id:
         return _with_schedule(session, user, now, Reply("Это турнир не вашего клуба."))
-    closed = registration_closed_because(tournament, now)
+    closed = player_registration_closed_because(tournament, now)
     if closed:
         return _with_schedule(session, user, now, Reply(closed))
     # The tournament row is locked, so a second press at once waits here and finds this one.

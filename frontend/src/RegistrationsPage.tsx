@@ -3,8 +3,10 @@ import {
   addPlayer,
   cancelRegistration,
   checkIn,
+  closeRegistration,
   type Club,
   fetchRegistrations,
+  openRegistration,
   type Player,
   type Registration,
   type Refund,
@@ -134,6 +136,16 @@ export default function RegistrationsPage({
       )}
       {state.status === "loaded" && (
         <>
+          {(state.data.can_close_registration || state.data.can_open_registration) && (
+            <ClosingPanel
+              closed={state.data.registration_closed_to_players}
+              onChange={(close) =>
+                change(async () => {
+                  await (close ? closeRegistration : openRegistration)(club.id, tournament.id);
+                })
+              }
+            />
+          )}
           {state.data.registration_open ? (
             <SignUp
               club={club}
@@ -159,6 +171,27 @@ export default function RegistrationsPage({
         </>
       )}
       {paymentDialog}
+    </div>
+  );
+}
+
+/** Closing registration to players before the start, when the hall is full, and opening it
+ * again. */
+function ClosingPanel({ closed, onChange }: { closed: boolean; onChange: (close: boolean) => void }) {
+  return (
+    <div
+      className={`flex flex-wrap items-center justify-between gap-3 rounded-2xl p-4 text-sm shadow-sm ${
+        closed ? "bg-amber-50 text-amber-900" : "bg-white text-slate-600"
+      }`}
+    >
+      <p>
+        {closed
+          ? "Запись закрыта: игроки не могут записаться сами, вы можете записать игрока."
+          : "Запись открыта: игроки записываются сами в Telegram-боте."}
+      </p>
+      <button type="button" onClick={() => onChange(!closed)} className={smallButton}>
+        {closed ? "Открыть запись" : "Закрыть запись"}
+      </button>
     </div>
   );
 }

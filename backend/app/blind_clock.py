@@ -58,6 +58,19 @@ class BlindClock:
     def resumed(self, now: datetime) -> "BlindClock":
         return replace(self, ends_at=now + self.time_left(now), remaining=None)
 
+    def restarted(self, now: datetime) -> "BlindClock":
+        """The item being played, from its start again; a paused clock stays paused."""
+        return self.moved(0, now)
+
+    def shifted(self, delta: timedelta, now: datetime) -> "BlindClock":
+        """The item being played with `delta` more (or, negative, less) of it left, but never
+        less than none: a running item with no time left ends at once."""
+        current = self.at(now)
+        left = max(current.time_left(now) + delta, timedelta(0))
+        if current.running:
+            return replace(current, ends_at=now + left)
+        return replace(current, remaining=left)
+
     def can_move(self, step: int, now: datetime) -> bool:
         return 0 <= self.at(now).item + step <= self._last
 

@@ -54,6 +54,40 @@ describe("tournament registrations", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("closes registration to players, still registers them itself, and opens it again", async () => {
+    const fetch = fakeBackend({
+      loggedIn: true,
+      tournaments: { upcoming: [FRIDAY], past: [] },
+      players: [IVAN, MARIA],
+    });
+    const user = await openRegistrations();
+
+    await user.click(await screen.findByRole("button", { name: "Закрыть запись" }));
+
+    expect(fetch).toHaveBeenCalledWith(
+      "/api/clubs/7/tournaments/5/registrations/close",
+      expect.objectContaining({ method: "POST" }),
+    );
+    expect(
+      await screen.findByText("Запись закрыта: игроки не могут записаться сами, вы можете записать игрока."),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("searchbox", { name: "Найти игрока клуба" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Открыть запись" }));
+    expect(await screen.findByRole("button", { name: "Закрыть запись" })).toBeInTheDocument();
+  });
+
+  it("offers no closing of registration once the tournament has started", async () => {
+    fakeBackend({
+      loggedIn: true,
+      tournaments: { upcoming: [FRIDAY], past: [] },
+      dropOutOpen: false,
+    });
+    await openRegistrations();
+
+    await screen.findByText("Пока никто не зарегистрирован");
+    expect(screen.queryByRole("button", { name: "Закрыть запись" })).not.toBeInTheDocument();
+  });
+
   it("adds a new player and registers them in one go", async () => {
     fakeBackend({ loggedIn: true, tournaments: { upcoming: [FRIDAY], past: [] } });
     const user = await openRegistrations();

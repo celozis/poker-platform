@@ -88,6 +88,9 @@ export function aGame(overrides: Partial<GameState> = {}): GameState {
     out: [],
     waiting: [],
     suggested_move: null,
+    summary: { in_game: 0, registered: 0, entries: 0, no_shows: 0 },
+    can_close_late_registration: false,
+    can_open_late_registration: false,
     ...overrides,
   };
 }
@@ -139,6 +142,8 @@ type FakeBackendOptions = {
   /** Defaults to `registrationOpen`. */
   dropOutOpen?: boolean;
   checkInOpen?: boolean;
+  /** The admin has closed registration to players before the start. */
+  registrationClosedToPlayers?: boolean;
   /** Games by tournament id; a tournament without one has not started. */
   games?: Record<number, GameState>;
   /** Hall boards by their secret code. */
@@ -190,6 +195,7 @@ export function fakeBackend({
   registrationOpen = true,
   dropOutOpen = registrationOpen,
   checkInOpen = true,
+  registrationClosedToPlayers = false,
   games = {},
   boards = {},
   results = {},
@@ -200,6 +206,7 @@ export function fakeBackend({
   actionLogs = {},
 }: FakeBackendOptions = {}) {
   let session = loggedIn;
+  let closedToPlayers = registrationClosedToPlayers;
   let playerSession = playerLoggedIn;
   const state: TournamentList = { live: [], ...structuredClone(tournaments) };
   const clubPlayers: Player[] = structuredClone(players);
@@ -239,8 +246,16 @@ export function fakeBackend({
         registration_open: registrationOpen,
         drop_out_open: dropOutOpen,
         check_in_open: checkInOpen,
+        registration_closed_to_players: closedToPlayers,
+        // Before the start, as far as this fake knows: while players can still drop out.
+        can_close_registration: dropOutOpen && !closedToPlayers,
+        can_open_registration: dropOutOpen && closedToPlayers,
         registrations: [...list].sort((a, b) => byName(a.player, b.player)),
       });
+    }
+    if ((rest === "/close" || rest === "/open") && method === "POST") {
+      closedToPlayers = rest === "/close";
+      return registrationsRoute("GET", tournamentId, "", body);
     }
     if (rest === "" && method === "POST") {
       const player = clubPlayers.find((p) => p.id === body.player_id);
@@ -311,6 +326,21 @@ export function fakeBackend({
       case "/previous-level":
         clock.item += rest === "/next-level" ? 1 : -1;
         clock.seconds_left = seconds[clock.item];
+        return answer();
+      case "/close-late-registration":
+      case "/open-late-registration": {
+        const open = rest === "/open-late-registration";
+        game.windows.late_registration = open;
+        game.can_close_late_registration = open;
+        game.can_open_late_registration = !open;
+        return answer();
+      }
+      case "/restart-level":
+        clock.seconds_left = seconds[clock.item];
+        return answer();
+      case "/add-minute":
+      case "/take-minute":
+        clock.seconds_left = Math.max(0, clock.seconds_left + (rest === "/add-minute" ? 60 : -60));
         return answer();
     }
     const [, playerId, action] = rest.match(/^\/players\/(\d+)\/([\w-]+)$/) ?? [];
@@ -507,7 +537,7 @@ export function fakeBackend({
       return registrationsRoute(method, Number(registrationsMatch[1]), registrationsMatch[2], body);
     }
     const gameMatch = url.match(
-      /^\/api\/clubs\/\d+\/tournaments\/(\d+)(\/(?:game|start|pause|resume|next-level|previous-level|players\/.+))$/,
+      /^\/api\/clubs\/\d+\/tournaments\/(\d+)(\/(?:game|start|pause|resume|next-level|previous-level|restart-level|add-minute|take-minute|close-late-registration|open-late-registration|players\/.+))$/,
     );
     if (gameMatch) {
       return gameRoute(Number(gameMatch[1]), gameMatch[2], body);

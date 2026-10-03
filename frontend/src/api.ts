@@ -85,6 +85,12 @@ export type TournamentRegistrations = {
   drop_out_open: boolean;
   /** Arrivals can be checked in: from 12 hours before the start to 12 hours after it. */
   check_in_open: boolean;
+  /** The admin has closed registration to players before the start: the bot no longer signs
+   * them up, the admin still does. */
+  registration_closed_to_players: boolean;
+  /** Registration can be closed to players now, or opened again: only before the start. */
+  can_close_registration: boolean;
+  can_open_registration: boolean;
   registrations: Registration[];
 };
 
@@ -240,6 +246,21 @@ export async function registerPlayer(
   return accepted(await postJson(url, { player_id: playerId }));
 }
 
+/** Closes registration to players before the start: the bot no longer signs them up. */
+export async function closeRegistration(
+  clubId: number,
+  tournamentId: number,
+): Promise<TournamentRegistrations> {
+  return accepted(await postJson(`${registrationsUrl(clubId, tournamentId)}/close`));
+}
+
+export async function openRegistration(
+  clubId: number,
+  tournamentId: number,
+): Promise<TournamentRegistrations> {
+  return accepted(await postJson(`${registrationsUrl(clubId, tournamentId)}/open`));
+}
+
 /** `refunded`: roubles given back by a storno of the buy-in the player paid; 0 when none. */
 export type Refund = { refunded: number };
 
@@ -336,6 +357,21 @@ export type GameState = {
   waiting: Registration[];
   /** A move that keeps tables even, when they are not. */
   suggested_move: Move | null;
+  summary: GameSummary;
+  /** Late registration is open and can be closed early. */
+  can_close_late_registration: boolean;
+  /** Late registration was closed early and the level the rules give has not passed. */
+  can_open_late_registration: boolean;
+};
+
+/** The tournament at a glance, counted in players except for the entries. */
+export type GameSummary = {
+  in_game: number;
+  registered: number;
+  /** First entries and re-entries. */
+  entries: number;
+  /** Registered but not come. */
+  no_shows: number;
 };
 
 export async function fetchGame(clubId: number, tournamentId: number): Promise<GameState> {
@@ -344,7 +380,17 @@ export async function fetchGame(clubId: number, tournamentId: number): Promise<G
   return response.json();
 }
 
-export type GameAction = "start" | "pause" | "resume" | "next-level" | "previous-level";
+export type GameAction =
+  | "start"
+  | "pause"
+  | "resume"
+  | "next-level"
+  | "previous-level"
+  | "restart-level"
+  | "add-minute"
+  | "take-minute"
+  | "close-late-registration"
+  | "open-late-registration";
 
 export async function runGame(
   clubId: number,
@@ -546,6 +592,13 @@ export type LoggedAction =
   | "paused"
   | "resumed"
   | "level_changed"
+  | "level_restarted"
+  | "minute_added"
+  | "minute_taken"
+  | "registration_closed"
+  | "registration_opened"
+  | "late_registration_closed"
+  | "late_registration_opened"
   | "knocked_out"
   | "knock_out_undone"
   | "reentry"

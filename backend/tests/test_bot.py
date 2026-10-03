@@ -328,6 +328,38 @@ def test_a_player_cannot_sign_up_twice(chat: BotChat, client: TestClient, club: 
     assert registered_names(client, url) == ["Мария Иванова"]
 
 
+def test_a_player_cannot_sign_up_once_the_admin_has_closed_registration(
+    chat: BotChat, client: TestClient, club: Club
+) -> None:
+    tournament = client.post(
+        f"/api/clubs/{club.id}/tournaments", json=a_tournament(name="Субботний турнир")
+    ).json()
+    url = f"/api/clubs/{club.id}/tournaments/{tournament['id']}"
+    go_through_the_bot(chat)
+    chat.send("/schedule")
+    client.post(f"{url}/registrations/close")
+
+    reply = chat.press("Записаться: 3.10 Субботний турнир")
+
+    assert reply == "Запись на турнир «Субботний турнир» закрыта."
+    assert registered_names(client, url) == []
+    assert "Субботний турнир, бай-ин 2 000 ₽ — запись закрыта" in chat.shown("ближайшие турниры")
+    assert chat.buttons_under("ближайшие турниры") == []
+
+
+def test_a_player_signed_up_before_registration_closed_can_still_drop_out(
+    chat: BotChat, client: TestClient, club: Club
+) -> None:
+    url = signed_up(chat, client, club)
+    client.post(f"{url}/registrations/close")
+
+    chat.send("/schedule")
+    reply = chat.press("Отменить запись: 3.10 Субботний турнир")
+
+    assert "Запись на турнир «Субботний турнир» отменена" in reply
+    assert registered_names(client, url) == []
+
+
 def test_a_player_cannot_sign_up_for_a_started_tournament_without_late_registration(
     chat: BotChat, client: TestClient, club: Club
 ) -> None:
@@ -360,6 +392,22 @@ def test_a_started_tournament_with_late_registration_open_is_in_the_schedule_to_
     chat.press("Записаться: 27.09 Вечерний турнир")
 
     assert "Мария Иванова" in registered_names(client, url)
+
+
+def test_a_started_tournament_whose_late_registration_closed_early_leaves_the_schedule(
+    chat: BotChat, client: TestClient, club: Club
+) -> None:
+    url, _ = ready_tournament(client, club, arrived=2, name="Вечерний турнир")
+    client.post(f"{url}/start")
+    go_through_the_bot(chat)
+    chat.send("/schedule")
+    client.post(f"{url}/close-late-registration")
+
+    reply = chat.press("Записаться: 27.09 Вечерний турнир")
+
+    assert reply == "Поздняя регистрация закрыта досрочно"
+    assert "Мария Иванова" not in registered_names(client, url)
+    assert "Вечерний турнир" not in chat.shown("Покер-клуб «Обь»")
 
 
 def bot_player_id(client: TestClient, club: Club) -> int:

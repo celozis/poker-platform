@@ -64,11 +64,11 @@ _Avoid_: Display name, short name
 
 **Player's Clubs (in the web cabinet)**: Every club whose Club Player List the player is on, in the order they joined them; the cabinet shows the rating and schedule of each.
 
-**Schedule (расписание)**: A club's tournaments a player can still sign up for, the ten soonest, with date, time (league time) and buy-in: those that have not started and are not cancelled, and those going on while their Late Registration is open (marked as going on). One the admin has neither started nor cancelled drops out once its check-in closes, 12 hours after its start. Each has a button to sign up or, once signed up (marked in the schedule), to drop out; no drop-out button once the tournament is going on or the player has come.
+**Schedule (расписание)**: A club's tournaments a player can still sign up for, the ten soonest, with date, time (league time) and buy-in: those that have not started and are not cancelled, and those going on while their Late Registration is open (marked as going on). One the admin has neither started nor cancelled drops out once its check-in closes, 12 hours after its start. Each has a button to sign up or, once signed up (marked in the schedule), to drop out; no drop-out button once the tournament is going on or the player has come. One whose registration the admin has closed to players stays in it, marked as closed, with no sign-up button.
 
 **Status**: Player's loyalty tier (auto-calculated from number of games, ЮДС integration). Affects discount on buy-in.
 
-**Registration**: A club player signed up for a tournament, at most once per tournament. States: Registered → Checked In → In Game (seated) → Out (finished with a place). Players sign up until the tournament is started, however late that is, and afterwards only during Late Registration; they drop out only before the start. The admin registers them, or they sign up themselves in the bot, by the same rules; in the bot a player who has come (checked in, so paid) cannot drop out: the admin gives the buy-in back.
+**Registration**: A club player signed up for a tournament, at most once per tournament. States: Registered → Checked In → In Game (seated) → Out (finished with a place). Players sign up until the tournament is started, however late that is, and afterwards only during Late Registration; they drop out only before the start. Before the start the admin can close registration to players (and open it again): the bot then signs nobody up and says registration is closed, while the admin still registers players and those signed up can still drop out. Once the tournament starts this no longer matters: Late Registration decides who sits down. The admin registers them, or they sign up themselves in the bot, by the same rules; in the bot a player who has come (checked in, so paid) cannot drop out: the admin gives the buy-in back.
 
 **Check-in**: Marking on the day that a registered player has come to the club; the player pays the buy-in then. Open from 12 hours before the tournament's start time to 12 hours after it, and closed once the tournament is started: a player who comes later is seated through Late Registration, which checks them in. A mistaken check-in can be taken back while check-in is open, which gives the buy-in back by a storno. Clubs have no time zone yet, which is why this is a window around the start rather than a calendar day.
 
@@ -76,6 +76,8 @@ _Avoid_: Display name, short name
 
 **Tournament**: A structured poker game event at a specific club on a specific date/time. Has: name, start time, buy-in, starting stack, seats per table, blind structure, rules (re-entry, add-on, late registration). States: Created (`scheduled` in code) → Running ⇄ Paused → Finished, or Created → Cancelled. A tournament is **started** when the admin starts it, not when its start time comes; a finished one is never started again. Only a tournament that has not started can be edited or cancelled; a cancelled one stays on the list, marked as cancelled.
 _Avoid_: "In Progress" (say Running)
+
+**Game Summary (сводка)**: The tournament at a glance on its running page: players in the game, players registered, entries (first entries and re-entries, so a re-entry counts again) and no-shows (registered, not come). Next to it the admin finds a player by name among those listed on the page.
 
 **Live Tournament**: One that is Running or Paused: players are knocked out, re-enter, take add-ons and sit down.
 
@@ -89,7 +91,7 @@ _Avoid_: "In Progress" (say Running)
 
 **Blind Level**: A row in the tournament's structure. Defines: small blind, big blind, ante, duration. Levels are numbered 1..N in play order; breaks are not numbered.
 
-**Blind Clock**: The timer of a started tournament: which level or break is being played and how much of it is left. It moves on to the next level or break by itself when time is up; the admin can pause it and switch to the next or previous level or break, which then starts from its full duration. The last level goes on with no time left.
+**Blind Clock**: The timer of a started tournament: which level or break is being played and how much of it is left. It moves on to the next level or break by itself when time is up; the admin can pause it and switch to the next or previous level or break, which then starts from its full duration. The admin can also start the current level or break again from its full duration («Сначала уровня»), and give it a minute more or less («+1 мин», «−1 мин»), on the pause too; a minute taken never leaves less than no time, so a running level with less than a minute left ends at once. The last level goes on with no time left.
 
 **Break**: A pause between levels in the blind structure. Has only a duration.
 
@@ -106,7 +108,7 @@ _Avoid_: Bust, elimination (in the admin panel)
 
 **Average Stack**: All the chips in play shared among the players still at the tables: a starting stack for every entry (the first one and each re-entry) and the add-on stack for every add-on. A knocked-out player's chips stay in play.
 
-**Late Registration**: Window during which new players can join, and registered players who came late can sit down, in a started tournament: up to and including a given level, or not offered at all.
+**Late Registration**: Window during which new players can join, and registered players who came late can sit down, in a started tournament: up to and including a given level, or not offered at all. The admin can close it early, for everyone, the admin too; and open it again while that level has not passed.
 
 Rule levels always refer to blind level numbers (breaks not counted) and must exist in the tournament's structure. A break belongs to the level before it: on the break after level N the windows of level N are still open, which is when clubs usually give the add-on.
 
@@ -302,7 +304,7 @@ docker compose logs backend | grep "Код входа"
 docker compose exec backend python -m app.demo
 ```
 
-It plays everything through the API with the clock set back (`app/demo.py`), so places, points, cashiers, action logs and blind clocks are the system's own; a few players of «Обь» sign up and drop out by the bot's own rules, so the logs of «Турбо-серия» and «Кубок новичков» show «игрок» too. Demo players' phones are +7 913 500-00-01 … -60. More staff: Сергей Лебедев +7 999 000-00-21 (admin, «Обь»), Ольга Кравец +7 999 000-00-22 (admin, «Енисей»), Павел Громов +7 999 000-00-03 (admin, «Томь»), Наталья Широкова +7 999 000-00-13 (owner, «Томь»). A Telegram-linked player plays in the tournaments of «Енисей», so the bot sends them a result and a reminder.
+It plays everything through the API with the clock set back (`app/demo.py`), so places, points, cashiers, action logs and blind clocks are the system's own; a few players of «Обь» sign up and drop out by the bot's own rules, so the logs of «Турбо-серия» and «Кубок новичков» show «игрок» too. «Турнир четверга» has its registration closed to players; «Енисей-турбо» its late registration closed early (it can be opened again); the clock of «Турбо-серия» was restarted and given a minute, the paused «Хайроллер» had a minute taken off. Demo players' phones are +7 913 500-00-01 … -60. More staff: Сергей Лебедев +7 999 000-00-21 (admin, «Обь»), Ольга Кравец +7 999 000-00-22 (admin, «Енисей»), Павел Громов +7 999 000-00-03 (admin, «Томь»), Наталья Широкова +7 999 000-00-13 (owner, «Томь»). A Telegram-linked player plays in the tournaments of «Енисей», so the bot sends them a result and a reminder.
 
 ### Running tests
 

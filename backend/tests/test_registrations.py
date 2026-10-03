@@ -100,6 +100,61 @@ def test_a_cancelled_tournament_takes_no_registrations(client: TestClient, club:
     assert client.get(registrations).json()["registration_open"] is False
 
 
+def test_admin_closes_registration_to_players_and_still_registers_them_and_opens_it_again(
+    client: TestClient, club: Club
+) -> None:
+    ivan = add_player(client, club, "Иван Петров", "+79135551234")
+    registrations = create_tournament(client, club)
+
+    closed = client.post(f"{registrations}/close")
+    registered = client.post(registrations, json={"player_id": ivan["id"]})
+    listed_closed = client.get(registrations).json()
+    opened = client.post(f"{registrations}/open")
+
+    assert closed.status_code == 200
+    assert closed.json()["registration_closed_to_players"] is True
+    assert (closed.json()["can_close_registration"], closed.json()["can_open_registration"]) == (
+        False,
+        True,
+    )
+    assert registered.status_code == 201
+    assert (listed_closed["registration_open"], listed_closed["registration_closed_to_players"]) == (
+        True,
+        True,
+    )
+    assert opened.json()["registration_closed_to_players"] is False
+    assert (opened.json()["can_close_registration"], opened.json()["can_open_registration"]) == (
+        True,
+        False,
+    )
+    assert client.get(registrations).json()["registration_closed_to_players"] is False
+
+
+def test_registration_is_closed_and_opened_only_before_the_start_and_only_once(
+    client: TestClient, club: Club
+) -> None:
+    registrations = create_tournament(client, club)
+    not_closed = client.post(f"{registrations}/open")
+    client.post(f"{registrations}/close")
+    closed_again = client.post(f"{registrations}/close")
+    url, _ = ready_tournament(client, club, arrived=2)
+    client.post(f"{url}/start")
+    after_start = client.post(f"{url}/registrations/close")
+    cancelled = create_tournament(client, club)
+    client.post(cancelled.replace("/registrations", "/cancel"))
+    in_cancelled = client.post(f"{cancelled}/close")
+    started = client.get(f"{url}/registrations").json()
+
+    assert (not_closed.status_code, not_closed.json()["detail"]) == (409, "Запись не закрыта")
+    assert (closed_again.status_code, closed_again.json()["detail"]) == (409, "Запись уже закрыта")
+    assert (after_start.status_code, after_start.json()["detail"]) == (
+        409,
+        "Турнир уже начался: закрыть можно позднюю регистрацию",
+    )
+    assert (in_cancelled.status_code, in_cancelled.json()["detail"]) == (409, "Турнир отменён")
+    assert (started["can_close_registration"], started["can_open_registration"]) == (False, False)
+
+
 def test_admin_cancels_a_registration_before_the_tournament_starts(
     client: TestClient, club: Club
 ) -> None:

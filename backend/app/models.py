@@ -80,6 +80,11 @@ class Tournament(Base):
     addon_price: Mapped[int | None]
     late_registration_until_level: Mapped[int | None]
     seats_per_table: Mapped[int] = mapped_column(default=9)
+    # Closed early by the admin, until opened again. Registration closed to players before the
+    # start: the bot no longer signs them up, the admin still does. Late registration closed for
+    # everyone, the admin too, before the level the rules give.
+    registration_closed_to_players: Mapped[bool] = mapped_column(default=False)
+    late_registration_closed_early: Mapped[bool] = mapped_column(default=False)
     # The secret part of the hall board's link (/board/<token>): the board opens without login,
     # so its link must not be guessable from the tournament's number (ADR-0007).
     board_token: Mapped[str] = mapped_column(

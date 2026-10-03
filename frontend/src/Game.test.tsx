@@ -128,6 +128,54 @@ describe("running a tournament", () => {
     expect(await screen.findByRole("button", { name: "Пауза" })).toBeInTheDocument();
   });
 
+  it("restarts the level and adds or takes a minute, also on pause", async () => {
+    const { user } = await openGame(running({ clock: { running: false, item: 1, seconds_left: 7 * 60 } }));
+    expect(await within(clock()).findByText("07:00")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "+1 мин" }));
+    expect(await within(clock()).findByText("08:00")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "−1 мин" }));
+    await user.click(screen.getByRole("button", { name: "−1 мин" }));
+    expect(await within(clock()).findByText("06:00")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Сначала уровня" }));
+    expect(await within(clock()).findByText("20:00")).toBeInTheDocument();
+    expect(clock()).toHaveTextContent("Уровень 2");
+    expect(clock()).toHaveTextContent("на паузе");
+  });
+
+  it("sums the tournament up: in the game, registered, entries and no-shows", async () => {
+    await openGame(running({ summary: { in_game: 3, registered: 6, entries: 5, no_shows: 2 } }));
+
+    const summary = await screen.findByRole("region", { name: "Сводка" });
+    expect(summary).toHaveTextContent("В игре3");
+    expect(summary).toHaveTextContent("Записалось6");
+    expect(summary).toHaveTextContent("Входов5");
+    expect(summary).toHaveTextContent("Не пришли2");
+  });
+
+  it("finds a player by name among those at the tables, knocked out and waiting", async () => {
+    const { user } = await openGame(
+      running({
+        in_game: [aSeat(IVAN, 1, 1), aSeat(MARIA, 2, 1)],
+        out: [{ player: PETR, place: 3, reentries: 0, addons: 0, points: null }],
+        waiting: [{ player: aPlayer({ id: 4, name: "Анна Петрова" }), status: "registered" }],
+        windows: { reentry: false, addon: false, late_registration: true },
+      }),
+    );
+
+    await user.type(await screen.findByRole("searchbox", { name: "Найти игрока" }), "петр");
+
+    expect(within(table("Стол 1")).getByRole("listitem", { name: "Иван Петров" })).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Стол 2" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("list", { name: "Выбывшие" })).not.toBeInTheDocument();
+    const waiting = screen.getByRole("list", { name: "Ждут посадки" });
+    expect(within(waiting).getByRole("listitem", { name: "Анна Петрова" })).toBeInTheDocument();
+
+    await user.clear(screen.getByRole("searchbox", { name: "Найти игрока" }));
+    expect(table("Стол 2")).toBeInTheDocument();
+    expect(screen.getByRole("list", { name: "Выбывшие" })).toBeInTheDocument();
+  });
+
   it("knocks a player out after the admin confirms and shows their place", async () => {
     const confirm = vi.fn(() => true);
     vi.stubGlobal("confirm", confirm);
@@ -295,6 +343,27 @@ describe("running a tournament", () => {
       "/api/clubs/7/tournaments/5/players/4/seat",
       expect.objectContaining({ body: JSON.stringify({ payment_method: "card" }) }),
     );
+  });
+
+  it("closes late registration early and opens it again", async () => {
+    const { user, fetch } = await openGame(
+      running({
+        windows: { reentry: false, addon: false, late_registration: true },
+        can_close_late_registration: true,
+      }),
+    );
+
+    await user.click(await screen.findByRole("button", { name: "Закрыть позднюю регистрацию" }));
+
+    expect(fetch).toHaveBeenCalledWith(
+      "/api/clubs/7/tournaments/5/close-late-registration",
+      expect.objectContaining({ method: "POST" }),
+    );
+    expect(await screen.findByText("Поздняя регистрация закрыта досрочно")).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Поздняя регистрация" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Открыть позднюю регистрацию" }));
+    expect(await screen.findByRole("button", { name: "Закрыть позднюю регистрацию" })).toBeInTheDocument();
+    expect(clock()).toHaveTextContent("Поздняя регистрация открыта до уровня 3");
   });
 
   it("registers and seats a newcomer found by name during late registration", async () => {

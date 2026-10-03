@@ -110,6 +110,47 @@ def test_the_blind_clock_is_logged_with_the_level_and_the_time_left(
     ]
 
 
+def test_restarting_the_level_and_a_minute_more_or_less_are_logged_with_the_time_before_and_after(
+    client: TestClient, club: Club, clock: FakeClock
+) -> None:
+    url, _ = ready_tournament(client, club, arrived=3)
+    client.post(f"{url}/start")
+    clock.advance(timedelta(minutes=27))
+
+    client.post(f"{url}/restart-level")
+    client.post(f"{url}/add-minute")
+    client.post(f"{url}/pause")
+    client.post(f"{url}/take-minute")
+
+    assert entries(client, url)[:4] == [
+        ("minute_taken", ADMIN, None, "Уровень 2: 21:00 → 20:00"),
+        ("paused", ADMIN, None, "Уровень 2, осталось 21:00"),
+        ("minute_added", ADMIN, None, "Уровень 2: 20:00 → 21:00"),
+        ("level_restarted", ADMIN, None, "Уровень 2: 13:00 → 20:00"),
+    ]
+
+
+def test_closing_and_opening_registration_and_late_registration_are_logged(
+    client: TestClient, club: Club, clock: FakeClock
+) -> None:
+    url, _ = ready_tournament(client, club, arrived=3)
+
+    client.post(f"{url}/registrations/close")
+    client.post(f"{url}/registrations/open")
+    client.post(f"{url}/start")
+    clock.advance(timedelta(minutes=5))
+    client.post(f"{url}/close-late-registration")
+    client.post(f"{url}/open-late-registration")
+
+    assert entries(client, url)[:5] == [
+        ("late_registration_opened", ADMIN, None, "Уровень 1, осталось 15:00"),
+        ("late_registration_closed", ADMIN, None, "Уровень 1, осталось 15:00"),
+        ("started", ADMIN, None, "Игроков: 3, столов: 1"),
+        ("registration_opened", ADMIN, None, ""),
+        ("registration_closed", ADMIN, None, ""),
+    ]
+
+
 def seat_of(game: dict[str, Any], player: dict[str, Any]) -> str:
     seated = next(s for s in game["in_game"] if s["player"]["id"] == player["id"])
     return f"Стол {seated['table']}, место {seated['seat']}"

@@ -18,7 +18,7 @@ import {
 } from "./api";
 import { describe, formatTime, next, useCountdown } from "./blindClock";
 import { startFormat } from "./dates";
-import { SERVER_UNREACHABLE, smallButton } from "./forms";
+import { inputClass, SERVER_UNREACHABLE, smallButton } from "./forms";
 import { usePayment } from "./PaymentDialog";
 import { paidFor } from "./payments";
 import { entries, pointsText } from "./points";
@@ -54,6 +54,9 @@ export default function GamePage({
   // One action at a time: a second click while the first is on its way is ignored.
   const acting = useRef(false);
   const { askToPay, paymentDialog } = usePayment();
+  const [query, setQuery] = useState("");
+  /** Whether the player is among those the admin is looking for; everyone when not searching. */
+  const found = (player: Player) => player.name.toLowerCase().includes(query.trim().toLowerCase());
 
   const show = useCallback((game: GameState) => {
     // Any answer replaces an older one still on its way.
@@ -163,6 +166,14 @@ export default function GamePage({
         </p>
       )}
 
+      {game && game.status !== "cancelled" && (
+        <SummaryPanel
+          game={game}
+          query={query}
+          onSearch={setQuery}
+          searchable={live || game.status === "finished"}
+        />
+      )}
       {game?.status === "scheduled" && (
         <StartPanel game={game} primaryColor={club.primary_color} onStart={() => run("start")} />
       )}
@@ -195,6 +206,7 @@ export default function GamePage({
       {game && live && (
         <Tables
           game={game}
+          found={found}
           onKnockOut={(playerId) => act(playerId, "knock-out")}
           onAddon={(player) => payFor(player, "addon", tournament.addon_price ?? 0)}
         />
@@ -219,7 +231,7 @@ export default function GamePage({
             )
           }
         >
-          <Waiting game={game} onSeat={seat} />
+          <Waiting game={game} found={found} onSeat={seat} />
         </SignUp>
       )}
       {game?.status === "finished" && (
@@ -230,15 +242,66 @@ export default function GamePage({
           </button>
         </div>
       )}
-      {game && game.out.length > 0 && (
+      {game && game.out.some((f) => found(f.player)) && (
         <Finished
           game={game}
+          found={found}
           onReenter={(player) => payFor(player, "reentry", tournament.buy_in)}
           onUndo={(playerId) => act(playerId, "undo-knock-out")}
         />
       )}
       {paymentDialog}
     </div>
+  );
+}
+
+/** The tournament at a glance, and a search for a player among those listed below. */
+function SummaryPanel({
+  game,
+  query,
+  onSearch,
+  searchable,
+}: {
+  game: GameState;
+  query: string;
+  onSearch: (query: string) => void;
+  searchable: boolean;
+}) {
+  const headingId = useId();
+  const { in_game, registered, entries, no_shows } = game.summary;
+  const counts: [string, number][] = [
+    ["В игре", in_game],
+    ["Записалось", registered],
+    ["Входов", entries],
+    ["Не пришли", no_shows],
+  ];
+  return (
+    <section
+      aria-labelledby={headingId}
+      className="flex flex-wrap items-center justify-between gap-4 rounded-2xl bg-white p-4 shadow-sm"
+    >
+      <h3 id={headingId} className="sr-only">
+        Сводка
+      </h3>
+      <dl className="flex flex-wrap gap-x-6 gap-y-2">
+        {counts.map(([label, count]) => (
+          <div key={label} className="flex flex-col">
+            <dt className="text-xs uppercase tracking-wide text-slate-500">{label}</dt>
+            <dd className="text-2xl font-semibold tabular-nums text-slate-900">{count}</dd>
+          </div>
+        ))}
+      </dl>
+      {searchable && (
+        <input
+          type="search"
+          aria-label="Найти игрока"
+          placeholder="Найти игрока"
+          value={query}
+          onChange={(event) => onSearch(event.target.value)}
+          className={`${inputClass} w-full sm:w-64`}
+        />
+      )}
+    </section>
   );
 }
 
@@ -346,6 +409,32 @@ function ClockPanel({
           ))}
         </ul>
       )}
+      {(game.can_close_late_registration || game.can_open_late_registration) && (
+        <div className="mt-4 flex flex-wrap items-center gap-2 text-sm">
+          {game.can_open_late_registration && (
+            <span className="rounded-full bg-amber-50 px-3 py-1 text-amber-800">
+              Поздняя регистрация закрыта досрочно
+            </span>
+          )}
+          {game.can_close_late_registration ? (
+            <button
+              type="button"
+              onClick={() => onAction("close-late-registration")}
+              className={smallButton}
+            >
+              Закрыть позднюю регистрацию
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => onAction("open-late-registration")}
+              className={smallButton}
+            >
+              Открыть позднюю регистрацию
+            </button>
+          )}
+        </div>
+      )}
       <div className="mt-4 flex flex-wrap gap-2">
         <button type="button" onClick={() => onAction("previous-level")} className={smallButton}>
           Предыдущий уровень
@@ -359,6 +448,15 @@ function ClockPanel({
             Продолжить
           </button>
         )}
+        <button type="button" onClick={() => onAction("restart-level")} className={smallButton}>
+          Сначала уровня
+        </button>
+        <button type="button" onClick={() => onAction("take-minute")} className={smallButton}>
+          −1 мин
+        </button>
+        <button type="button" onClick={() => onAction("add-minute")} className={smallButton}>
+          +1 мин
+        </button>
         <button type="button" onClick={() => onAction("next-level")} className={smallButton}>
           Следующий уровень
         </button>
@@ -388,10 +486,13 @@ function MoveSuggestion({ game, onMove }: { game: GameState; onMove: () => void 
 
 function Tables({
   game,
+  found,
   onKnockOut,
   onAddon,
 }: {
   game: GameState;
+  /** Only the players searched for are shown, and only the tables they sit at. */
+  found: (player: Player) => boolean;
   onKnockOut: (playerId: number) => void;
   onAddon: (player: Player) => void;
 }) {
@@ -405,28 +506,37 @@ function Tables({
 
   return (
     <div className="grid gap-4 md:grid-cols-2">
-      {tables.map((table) => (
-        <TableCard
-          key={table}
-          title={final ? "Финальный стол" : `Стол ${table}`}
-          seats={game.in_game.filter((s) => s.table === table)}
-          canAddon={(s) => game.windows.addon && !s.addon_this_entry}
-          onKnockOut={knockOut}
-          onAddon={(s) => onAddon(s.player)}
-        />
-      ))}
+      {tables.map((table) => {
+        const seats = game.in_game.filter((s) => s.table === table);
+        const shown = seats.filter((s) => found(s.player));
+        if (shown.length === 0) return null;
+        return (
+          <TableCard
+            key={table}
+            title={final ? "Финальный стол" : `Стол ${table}`}
+            players={seats.length}
+            seats={shown}
+            canAddon={(s) => game.windows.addon && !s.addon_this_entry}
+            onKnockOut={knockOut}
+            onAddon={(s) => onAddon(s.player)}
+          />
+        );
+      })}
     </div>
   );
 }
 
 function TableCard({
   title,
+  players,
   seats,
   canAddon,
   onKnockOut,
   onAddon,
 }: {
   title: string;
+  /** How many sit at the table, whether shown or not. */
+  players: number;
   seats: SeatedPlayer[];
   canAddon: (seated: SeatedPlayer) => boolean;
   onKnockOut: (seated: SeatedPlayer) => void;
@@ -439,7 +549,7 @@ function TableCard({
         <h3 id={headingId} className="font-semibold text-slate-900">
           {title}
         </h3>
-        <p className="text-sm text-slate-500">Игроков: {seats.length}</p>
+        <p className="text-sm text-slate-500">Игроков: {players}</p>
       </div>
       <ul className="divide-y divide-slate-200 rounded-xl border border-slate-200">
         {seats.map((seated) => (
@@ -476,18 +586,21 @@ function TableCard({
 
 function Waiting({
   game,
+  found,
   onSeat,
 }: {
   game: GameState;
+  found: (player: Player) => boolean;
   onSeat: (registration: Registration) => void;
 }) {
-  if (game.waiting.length === 0) return null;
+  const waiting = game.waiting.filter((r) => found(r.player));
+  if (waiting.length === 0) return null;
   return (
     <ul
       aria-label="Ждут посадки"
       className="mb-4 divide-y divide-slate-200 rounded-xl border border-slate-200"
     >
-      {game.waiting.map((registration) => (
+      {waiting.map((registration) => (
         <li
           key={registration.player.id}
           aria-label={registration.player.name}
@@ -505,10 +618,12 @@ function Waiting({
 
 function Finished({
   game,
+  found,
   onReenter,
   onUndo,
 }: {
   game: GameState;
+  found: (player: Player) => boolean;
   onReenter: (player: Player) => void;
   /** Takes back a knock-out marked by mistake; not a re-entry. */
   onUndo: (playerId: number) => void;
@@ -519,7 +634,7 @@ function Finished({
     <section className="rounded-2xl bg-white p-6 shadow-sm">
       <h3 className="mb-3 text-lg font-semibold text-slate-900">{title}</h3>
       <ul aria-label={title} className="divide-y divide-slate-200 rounded-xl border border-slate-200">
-        {game.out.map((player: FinishedPlayer) => (
+        {game.out.filter((f) => found(f.player)).map((player: FinishedPlayer) => (
           <li
             key={player.player.id}
             aria-label={player.player.name}

@@ -8,7 +8,8 @@ with the whole game (GameState), so the admin panel just shows what it gets.
 The rules themselves live in pure modules: app/seating.py, app/blind_clock.py and
 app/entry_windows.py."""
 
-from dataclasses import asdict
+from collections.abc import Callable
+from dataclasses import asdict, replace
 from datetime import datetime, timedelta
 from random import Random
 from typing import Annotated, cast
@@ -30,6 +31,8 @@ from app.schemas import (
     EntryWindowsOut,
     FinishedPlayer,
     GameState,
+    GameSummary,
+    LoggedAction,
     MoveIn,
     MoveOut,
     PaymentIn,
@@ -95,10 +98,26 @@ def _item_name(tournament: Tournament, item: int) -> str:
     return f"уровень {sum(i.kind == 'level' for i in structure[: item + 1])}"
 
 
+def _minutes_and_seconds(time: timedelta) -> str:
+    minutes, seconds = divmod(round(time.total_seconds()), 60)
+    return f"{minutes}:{seconds:02}"
+
+
 def _clock_details(tournament: Tournament, clock: BlindClock, now: datetime) -> str:
     """What the clock shows the admin: "Уровень 1, осталось 15:00"."""
-    minutes, seconds = divmod(round(clock.time_left(now).total_seconds()), 60)
-    return f"{_item_name(tournament, clock.at(now).item).capitalize()}, осталось {minutes}:{seconds:02}"
+    item = _item_name(tournament, clock.at(now).item).capitalize()
+    return f"{item}, осталось {_minutes_and_seconds(clock.time_left(now))}"
+
+
+def _time_change(tournament: Tournament, was: BlindClock, became: BlindClock, now: datetime) -> str:
+    """"Уровень 2: 13:00 → 20:00": how much of the item was left and how much is left now. An item
+    whose time ran out has already given way to the next one, so it is left no time."""
+    item = was.at(now).item
+    left = became.time_left(now) if became.at(now).item == item else timedelta(0)
+    return (
+        f"{_item_name(tournament, item).capitalize()}: "
+        f"{_minutes_and_seconds(was.time_left(now))} → {_minutes_and_seconds(left)}"
+    )
 
 
 def _registrations(session: DbSession, tournament: Tournament) -> list[Registration]:
@@ -135,8 +154,8 @@ def _places(registrations: list[Registration]) -> dict[int, int]:
     return {r.player_id: len(played) - before for before, r in enumerate(finished)}
 
 
-def current_windows(tournament: Tournament, now: datetime) -> EntryWindows:
-    """What the tournament takes right now; nothing unless it is running or paused."""
+def _windows_by_rules(tournament: Tournament, now: datetime) -> EntryWindows:
+    """What the tournament's rules let it take right now; nothing unless it is running or paused."""
     clock = _clock(tournament)
     if clock is None or not tournament.is_live:
         return EntryWindows(reentry=False, addon=False, late_registration=False)
@@ -149,13 +168,24 @@ def current_windows(tournament: Tournament, now: datetime) -> EntryWindows:
     )
 
 
+def current_windows(tournament: Tournament, now: datetime) -> EntryWindows:
+    """What the tournament takes right now: what its rules let it, but no late registration once
+    the admin has closed it early."""
+    windows = _windows_by_rules(tournament, now)
+    if tournament.late_registration_closed_early:
+        return replace(windows, late_registration=False)
+    return windows
+
+
 def late_registration_closed_because(tournament: Tournament, now: datetime) -> str | None:
     """Why a running or paused tournament takes no more players right now, if it does not."""
     until = tournament.late_registration_until_level
     if until is None:
         return "Турнир уже идёт, поздней регистрации в нём нет"
-    if not current_windows(tournament, now).late_registration:
+    if not _windows_by_rules(tournament, now).late_registration:
         return f"Поздняя регистрация закрыта: она шла до уровня {until}"
+    if tournament.late_registration_closed_early:
+        return "Поздняя регистрация закрыта досрочно"
     return None
 
 
@@ -169,6 +199,16 @@ def clock_out(tournament: Tournament, now: datetime) -> ClockOut | None:
         running=clock.running,
         item=clock.item,
         seconds_left=round(clock.time_left(now).total_seconds(), 3),
+    )
+
+
+def _summary(registrations: list[Registration]) -> GameSummary:
+    played = [r for r in registrations if r.table_number is not None or r.finish_order is not None]
+    return GameSummary(
+        in_game=sum(r.table_number is not None for r in registrations),
+        registered=len(registrations),
+        entries=len(played) + sum(r.reentries for r in played),
+        no_shows=sum(r.checked_in_at is None for r in registrations),
     )
 
 
@@ -219,6 +259,10 @@ def _state(session: DbSession, tournament: Tournament, now: datetime) -> GameSta
             to_table=move.to_seat.table,
             to_seat=move.to_seat.seat,
         ),
+        summary=_summary(registrations),
+        can_close_late_registration=windows.late_registration,
+        can_open_late_registration=tournament.late_registration_closed_early
+        and _windows_by_rules(tournament, now).late_registration,
     )
 
 
@@ -344,6 +388,113 @@ def previous_level(
     tournament_id: int, club: AdminClub, admin: CurrentAdmin, session: DbSession, now: Now
 ) -> GameState:
     return _switch_level(tournament_id, club, admin, session, now, step=-1)
+
+
+# What the admin does to the time left of the current level or break.
+ClockAdjustment = Callable[[BlindClock, datetime], BlindClock]
+MINUTE = timedelta(minutes=1)
+
+
+def _adjust_clock(
+    tournament_id: int,
+    club: Club,
+    admin: Admin,
+    session: DbSession,
+    now: datetime,
+    action: LoggedAction,
+    adjust: ClockAdjustment,
+) -> GameState:
+    """Changes how much of the current level or break is left."""
+    tournament = _live_tournament(session, club, tournament_id)
+    clock = _live_clock(tournament)
+    adjusted = adjust(clock, now)
+    _set_clock(tournament, adjusted)
+    action_log.record(
+        session, tournament, admin, action, now, details=_time_change(tournament, clock, adjusted, now)
+    )
+    return _saved(session, tournament, now)
+
+
+@router.post("/restart-level")
+def restart_level(
+    tournament_id: int, club: AdminClub, admin: CurrentAdmin, session: DbSession, now: Now
+) -> GameState:
+    """Plays the current level or break again from its full duration, as after a mistaken skip."""
+    return _adjust_clock(
+        tournament_id, club, admin, session, now, "level_restarted", BlindClock.restarted
+    )
+
+
+@router.post("/add-minute")
+def add_minute(
+    tournament_id: int, club: AdminClub, admin: CurrentAdmin, session: DbSession, now: Now
+) -> GameState:
+    return _adjust_clock(
+        tournament_id,
+        club,
+        admin,
+        session,
+        now,
+        "minute_added",
+        lambda clock, at: clock.shifted(MINUTE, at),
+    )
+
+
+@router.post("/take-minute")
+def take_minute(
+    tournament_id: int, club: AdminClub, admin: CurrentAdmin, session: DbSession, now: Now
+) -> GameState:
+    """Takes a minute off the current level or break, but leaves no less than no time."""
+    return _adjust_clock(
+        tournament_id,
+        club,
+        admin,
+        session,
+        now,
+        "minute_taken",
+        lambda clock, at: clock.shifted(-MINUTE, at),
+    )
+
+
+def _close_or_open_late_registration(
+    tournament_id: int, club: Club, admin: Admin, session: DbSession, now: datetime, close: bool
+) -> GameState:
+    """Closes late registration before the level the rules give, for everyone, the admin too;
+    or opens it again, while that level has not passed."""
+    tournament = _live_tournament(session, club, tournament_id)
+    until = tournament.late_registration_until_level
+    if until is None:
+        raise _refuse("В этом турнире нет поздней регистрации")
+    if not _windows_by_rules(tournament, now).late_registration:
+        if close:
+            raise _refuse(f"Поздняя регистрация уже закрыта: она шла до уровня {until}")
+        raise _refuse(f"Поздняя регистрация шла до уровня {until}, открыть её снова нельзя")
+    if tournament.late_registration_closed_early == close:
+        raise _refuse("Поздняя регистрация уже закрыта" if close else "Поздняя регистрация не закрыта")
+    tournament.late_registration_closed_early = close
+    action_log.record(
+        session,
+        tournament,
+        admin,
+        "late_registration_closed" if close else "late_registration_opened",
+        now,
+        details=_clock_details(tournament, _live_clock(tournament), now),
+    )
+    return _saved(session, tournament, now)
+
+
+@router.post("/close-late-registration")
+def close_late_registration(
+    tournament_id: int, club: AdminClub, admin: CurrentAdmin, session: DbSession, now: Now
+) -> GameState:
+    return _close_or_open_late_registration(tournament_id, club, admin, session, now, close=True)
+
+
+@router.post("/open-late-registration")
+def open_late_registration(
+    tournament_id: int, club: AdminClub, admin: CurrentAdmin, session: DbSession, now: Now
+) -> GameState:
+    return _close_or_open_late_registration(tournament_id, club, admin, session, now, close=False)
 
 
 def _registered(registrations: list[Registration], player_id: int) -> Registration:
